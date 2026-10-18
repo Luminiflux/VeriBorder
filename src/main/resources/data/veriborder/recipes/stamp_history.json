@@ -1,0 +1,29 @@
+{
+    "type":  "minecraft:crafting_shaped",
+    "pattern":  [
+                    "IGI",
+                    "RKR",
+                    "PPP"
+                ],
+    "key":  {
+                "I":  {
+                          "item":  "minecraft:iron_ingot"
+                      },
+                "G":  {
+                          "item":  "minecraft:glass"
+                      },
+                "P":  {
+                          "item":  "minecraft:paper"
+                      },
+                "R":  {
+                          "item":  "minecraft:redstone"
+                      },
+                "K":  {
+                          "item":  "minecraft:book"
+                      }
+            },
+    "result":  {
+                   "item":  "veriborder:stamp_history",
+                   "count":  1
+               }
+}

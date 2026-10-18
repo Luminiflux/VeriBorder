@@ -1,0 +1,20 @@
+{
+    "variants":  {
+                     "facing=north":  {
+                                          "model":  "veriborder:block/station_verifier",
+                                          "y":  0
+                                      },
+                     "facing=east":  {
+                                         "model":  "veriborder:block/station_verifier",
+                                         "y":  90
+                                     },
+                     "facing=south":  {
+                                          "model":  "veriborder:block/station_verifier",
+                                          "y":  180
+                                      },
+                     "facing=west":  {
+                                         "model":  "veriborder:block/station_verifier",
+                                         "y":  270
+                                     }
+                 }
+}

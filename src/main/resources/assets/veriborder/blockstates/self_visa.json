@@ -1,0 +1,20 @@
+{
+    "variants":  {
+                     "facing=north":  {
+                                          "model":  "veriborder:block/self_visa",
+                                          "y":  0
+                                      },
+                     "facing=east":  {
+                                         "model":  "veriborder:block/self_visa",
+                                         "y":  90
+                                     },
+                     "facing=south":  {
+                                          "model":  "veriborder:block/self_visa",
+                                          "y":  180
+                                      },
+                     "facing=west":  {
+                                         "model":  "veriborder:block/self_visa",
+                                         "y":  270
+                                     }
+                 }
+}

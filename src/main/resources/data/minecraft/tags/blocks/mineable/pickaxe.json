@@ -1,0 +1,26 @@
+{
+    "replace":  false,
+    "values":  [
+                   "veriborder:id_issuer",
+                   "veriborder:passport_issuer",
+                   "veriborder:permit_issuer",
+                   "veriborder:visa_issuer",
+                   "veriborder:endorsement_machine",
+                   "veriborder:hotel_reader",
+                   "veriborder:desk_scanner",
+                   "veriborder:manual_terminal",
+                   "veriborder:airport_checkin",
+                   "veriborder:station_verifier",
+                   "veriborder:egate",
+                   "veriborder:entry_stamp",
+                   "veriborder:exit_stamp",
+                   "veriborder:stamp_history",
+                   "veriborder:loss_terminal",
+                   "veriborder:renewal_machine",
+                   "veriborder:print_preview",
+                   "veriborder:blacklist_terminal",
+                   "veriborder:exit_gate",
+                   "veriborder:self_endorsement",
+                   "veriborder:self_visa"
+               ]
+}

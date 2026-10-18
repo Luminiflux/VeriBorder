@@ -1,0 +1,24 @@
+{
+    "type":  "minecraft:crafting_shapeless",
+    "ingredients":  [
+                        {
+                            "item":  "minecraft:paper"
+                        },
+                        {
+                            "item":  "minecraft:paper"
+                        },
+                        {
+                            "item":  "minecraft:gold_nugget"
+                        },
+                        {
+                            "item":  "minecraft:iron_ingot"
+                        },
+                        {
+                            "item":  "minecraft:red_dye"
+                        }
+                    ],
+    "result":  {
+                   "item":  "veriborder:id_card",
+                   "count":  1
+               }
+}

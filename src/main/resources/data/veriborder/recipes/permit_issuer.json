@@ -1,0 +1,29 @@
+{
+    "type":  "minecraft:crafting_shaped",
+    "pattern":  [
+                    "IGI",
+                    "PBP",
+                    "IKI"
+                ],
+    "key":  {
+                "I":  {
+                          "item":  "minecraft:iron_ingot"
+                      },
+                "G":  {
+                          "item":  "minecraft:glass"
+                      },
+                "P":  {
+                          "item":  "minecraft:paper"
+                      },
+                "B":  {
+                          "item":  "minecraft:iron_block"
+                      },
+                "K":  {
+                          "item":  "minecraft:book"
+                      }
+            },
+    "result":  {
+                   "item":  "veriborder:permit_issuer",
+                   "count":  1
+               }
+}

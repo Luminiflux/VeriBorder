@@ -1,0 +1,26 @@
+{
+    "type":  "minecraft:crafting_shaped",
+    "pattern":  [
+                    "IGI",
+                    "IRI",
+                    "PPP"
+                ],
+    "key":  {
+                "I":  {
+                          "item":  "minecraft:iron_ingot"
+                      },
+                "G":  {
+                          "item":  "minecraft:glass"
+                      },
+                "P":  {
+                          "item":  "minecraft:paper"
+                      },
+                "R":  {
+                          "item":  "minecraft:redstone"
+                      }
+            },
+    "result":  {
+                   "item":  "veriborder:hotel_reader",
+                   "count":  1
+               }
+}

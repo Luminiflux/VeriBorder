@@ -1,0 +1,20 @@
+{
+    "variants":  {
+                     "facing=north":  {
+                                          "model":  "veriborder:block/passport_issuer",
+                                          "y":  0
+                                      },
+                     "facing=east":  {
+                                         "model":  "veriborder:block/passport_issuer",
+                                         "y":  90
+                                     },
+                     "facing=south":  {
+                                          "model":  "veriborder:block/passport_issuer",
+                                          "y":  180
+                                      },
+                     "facing=west":  {
+                                         "model":  "veriborder:block/passport_issuer",
+                                         "y":  270
+                                     }
+                 }
+}

@@ -1,0 +1,20 @@
+{
+    "variants":  {
+                     "facing=north":  {
+                                          "model":  "veriborder:block/stamp_history",
+                                          "y":  0
+                                      },
+                     "facing=east":  {
+                                         "model":  "veriborder:block/stamp_history",
+                                         "y":  90
+                                     },
+                     "facing=south":  {
+                                          "model":  "veriborder:block/stamp_history",
+                                          "y":  180
+                                      },
+                     "facing=west":  {
+                                         "model":  "veriborder:block/stamp_history",
+                                         "y":  270
+                                     }
+                 }
+}

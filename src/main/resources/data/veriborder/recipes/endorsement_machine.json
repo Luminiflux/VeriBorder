@@ -1,0 +1,29 @@
+{
+    "type":  "minecraft:crafting_shaped",
+    "pattern":  [
+                    "IGI",
+                    "KBK",
+                    "IAI"
+                ],
+    "key":  {
+                "I":  {
+                          "item":  "minecraft:iron_ingot"
+                      },
+                "G":  {
+                          "item":  "minecraft:glass"
+                      },
+                "B":  {
+                          "item":  "minecraft:iron_block"
+                      },
+                "A":  {
+                          "item":  "minecraft:amethyst_shard"
+                      },
+                "K":  {
+                          "item":  "minecraft:book"
+                      }
+            },
+    "result":  {
+                   "item":  "veriborder:endorsement_machine",
+                   "count":  1
+               }
+}

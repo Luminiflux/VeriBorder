@@ -1,0 +1,29 @@
+{
+    "type":  "minecraft:crafting_shaped",
+    "pattern":  [
+                    "IBI",
+                    "GRG",
+                    "IPR"
+                ],
+    "key":  {
+                "I":  {
+                          "item":  "minecraft:iron_ingot"
+                      },
+                "B":  {
+                          "item":  "minecraft:iron_block"
+                      },
+                "G":  {
+                          "item":  "minecraft:glass"
+                      },
+                "R":  {
+                          "item":  "minecraft:redstone"
+                      },
+                "P":  {
+                          "item":  "minecraft:red_dye"
+                      }
+            },
+    "result":  {
+                   "item":  "veriborder:exit_gate",
+                   "count":  1
+               }
+}

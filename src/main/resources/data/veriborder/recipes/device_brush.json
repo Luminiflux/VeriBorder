@@ -1,0 +1,18 @@
+{
+    "type":  "minecraft:crafting_shapeless",
+    "ingredients":  [
+                        {
+                            "item":  "minecraft:feather"
+                        },
+                        {
+                            "item":  "minecraft:stick"
+                        },
+                        {
+                            "item":  "minecraft:gold_nugget"
+                        }
+                    ],
+    "result":  {
+                   "item":  "veriborder:device_brush",
+                   "count":  1
+               }
+}

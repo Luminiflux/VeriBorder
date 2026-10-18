@@ -1,0 +1,29 @@
+{
+    "type":  "minecraft:crafting_shaped",
+    "pattern":  [
+                    "IGI",
+                    "RKR",
+                    "IBI"
+                ],
+    "key":  {
+                "I":  {
+                          "item":  "minecraft:iron_ingot"
+                      },
+                "G":  {
+                          "item":  "minecraft:glass"
+                      },
+                "B":  {
+                          "item":  "minecraft:iron_block"
+                      },
+                "R":  {
+                          "item":  "minecraft:redstone"
+                      },
+                "K":  {
+                          "item":  "minecraft:book"
+                      }
+            },
+    "result":  {
+                   "item":  "veriborder:manual_terminal",
+                   "count":  1
+               }
+}

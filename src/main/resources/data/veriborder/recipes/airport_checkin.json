@@ -1,0 +1,29 @@
+{
+    "type":  "minecraft:crafting_shaped",
+    "pattern":  [
+                    "GGG",
+                    "IRI",
+                    "PBP"
+                ],
+    "key":  {
+                "I":  {
+                          "item":  "minecraft:iron_ingot"
+                      },
+                "G":  {
+                          "item":  "minecraft:glass"
+                      },
+                "P":  {
+                          "item":  "minecraft:paper"
+                      },
+                "B":  {
+                          "item":  "minecraft:iron_block"
+                      },
+                "R":  {
+                          "item":  "minecraft:redstone"
+                      }
+            },
+    "result":  {
+                   "item":  "veriborder:airport_checkin",
+                   "count":  1
+               }
+}

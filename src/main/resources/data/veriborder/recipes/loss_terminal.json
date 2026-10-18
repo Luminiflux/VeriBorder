@@ -1,0 +1,32 @@
+{
+    "type":  "minecraft:crafting_shaped",
+    "pattern":  [
+                    "IGI",
+                    "RKR",
+                    "PBP"
+                ],
+    "key":  {
+                "I":  {
+                          "item":  "minecraft:iron_ingot"
+                      },
+                "G":  {
+                          "item":  "minecraft:glass"
+                      },
+                "R":  {
+                          "item":  "minecraft:redstone"
+                      },
+                "K":  {
+                          "item":  "minecraft:book"
+                      },
+                "P":  {
+                          "item":  "minecraft:black_dye"
+                      },
+                "B":  {
+                          "item":  "minecraft:iron_block"
+                      }
+            },
+    "result":  {
+                   "item":  "veriborder:loss_terminal",
+                   "count":  1
+               }
+}

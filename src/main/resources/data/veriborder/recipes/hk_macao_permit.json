@@ -1,0 +1,24 @@
+{
+    "type":  "minecraft:crafting_shapeless",
+    "ingredients":  [
+                        {
+                            "item":  "minecraft:book"
+                        },
+                        {
+                            "item":  "minecraft:paper"
+                        },
+                        {
+                            "item":  "minecraft:paper"
+                        },
+                        {
+                            "item":  "minecraft:blue_dye"
+                        },
+                        {
+                            "item":  "minecraft:gold_nugget"
+                        }
+                    ],
+    "result":  {
+                   "item":  "veriborder:hk_macao_permit",
+                   "count":  1
+               }
+}
