@@ -1,6 +1,7 @@
 package com.veriborder.block;
 
 import com.veriborder.doc.CredentialCode;
+import com.veriborder.doc.DocStyle;
 import com.veriborder.doc.EndorsementType;
 import com.veriborder.doc.VerificationResult;
 import com.veriborder.doc.VisaType;
@@ -52,15 +53,39 @@ public class DeviceBlockEntity extends BlockEntity {
     /**
      * Persisted + synced issuer lock configuration. Locked values are enforced on
      * the server, so a client that ignores them still cannot issue a different
-     * document name or authority.
+     * document name, authority, layout, place, date, validity, visa type/code or
+     * endorsement type.
      */
     public record Locks(boolean lockDocumentName, String lockedDocumentName,
-                        boolean lockAuthority, String lockedAuthority) {
-        public static final Locks NONE = new Locks(false, "", false, "");
+                        boolean lockAuthority, String lockedAuthority,
+                        boolean lockStyle, String lockedStyle,
+                        boolean lockPlace, String lockedPlace,
+                        boolean lockIssueDate, String lockedIssueDate,
+                        boolean lockValidity, int lockedValidityYears,
+                        boolean lockVisaType, String lockedVisaType,
+                        boolean lockVisaCode, String lockedVisaCode,
+                        boolean lockEndorsementType, String lockedEndorsementType) {
+        public static final Locks NONE = new Locks(false, "", false, "",
+                false, "", false, "", false, "", false, 0,
+                false, "", false, "", false, "");
 
         public Locks {
             lockedDocumentName = normalize(lockedDocumentName);
             lockedAuthority = normalize(lockedAuthority);
+            lockedStyle = normalize(lockedStyle);
+            lockedPlace = normalize(lockedPlace);
+            lockedIssueDate = normalize(lockedIssueDate);
+            lockedVisaType = normalize(lockedVisaType);
+            lockedVisaCode = normalize(lockedVisaCode);
+            lockedEndorsementType = normalize(lockedEndorsementType);
+        }
+
+        /** Pre-1.2.1 lock view (document name and authority only). */
+        public Locks(boolean lockDocumentName, String lockedDocumentName,
+                     boolean lockAuthority, String lockedAuthority) {
+            this(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority,
+                    false, "", false, "", false, "", false, 0,
+                    false, "", false, "", false, "");
         }
 
         public static Locks fromTag(CompoundTag tag) {
@@ -71,7 +96,21 @@ public class DeviceBlockEntity extends BlockEntity {
                     tag.getBoolean("lockDocumentName"),
                     tag.getString("lockedDocumentName"),
                     tag.getBoolean("lockAuthority"),
-                    tag.getString("lockedAuthority")
+                    tag.getString("lockedAuthority"),
+                    tag.getBoolean("lockStyle"),
+                    tag.getString("lockedStyle"),
+                    tag.getBoolean("lockPlace"),
+                    tag.getString("lockedPlace"),
+                    tag.getBoolean("lockIssueDate"),
+                    tag.getString("lockedIssueDate"),
+                    tag.getBoolean("lockValidity"),
+                    tag.getInt("lockedValidityYears"),
+                    tag.getBoolean("lockVisaType"),
+                    tag.getString("lockedVisaType"),
+                    tag.getBoolean("lockVisaCode"),
+                    tag.getString("lockedVisaCode"),
+                    tag.getBoolean("lockEndorsementType"),
+                    tag.getString("lockedEndorsementType")
             );
         }
 
@@ -80,6 +119,20 @@ public class DeviceBlockEntity extends BlockEntity {
             tag.putString("lockedDocumentName", lockedDocumentName);
             tag.putBoolean("lockAuthority", lockAuthority);
             tag.putString("lockedAuthority", lockedAuthority);
+            tag.putBoolean("lockStyle", lockStyle);
+            tag.putString("lockedStyle", lockedStyle);
+            tag.putBoolean("lockPlace", lockPlace);
+            tag.putString("lockedPlace", lockedPlace);
+            tag.putBoolean("lockIssueDate", lockIssueDate);
+            tag.putString("lockedIssueDate", lockedIssueDate);
+            tag.putBoolean("lockValidity", lockValidity);
+            tag.putInt("lockedValidityYears", lockedValidityYears);
+            tag.putBoolean("lockVisaType", lockVisaType);
+            tag.putString("lockedVisaType", lockedVisaType);
+            tag.putBoolean("lockVisaCode", lockVisaCode);
+            tag.putString("lockedVisaCode", lockedVisaCode);
+            tag.putBoolean("lockEndorsementType", lockEndorsementType);
+            tag.putString("lockedEndorsementType", lockedEndorsementType);
             return tag;
         }
 
@@ -109,6 +162,27 @@ public class DeviceBlockEntity extends BlockEntity {
     private String lockedDocumentName = "";
     private boolean lockAuthority;
     private String lockedAuthority = "";
+    /** Locked document layout (DocStyle id); applied only when the kind matches. */
+    private boolean lockStyle;
+    private String lockedStyle = "";
+    /** Locked place of issue for documents / country for visas. */
+    private boolean lockPlace;
+    private String lockedPlace = "";
+    /** Locked issue date (YYYY-MM-DD) for documents, visas and endorsements. */
+    private boolean lockIssueDate;
+    private String lockedIssueDate = "";
+    /** Locked validity in years; 0 (or less) means permanent. */
+    private boolean lockValidity;
+    private int lockedValidityYears;
+    /** Locked visa type id, used by visa issuers, self-visa and attached visas. */
+    private boolean lockVisaType;
+    private String lockedVisaType = "";
+    /** Locked eight-digit visa code (passport-attached visas). */
+    private boolean lockVisaCode;
+    private String lockedVisaCode = "";
+    /** Locked endorsement type id, used by endorsement machines. */
+    private boolean lockEndorsementType;
+    private String lockedEndorsementType = "";
     /** Fixed code used by a self-service visa/endorsement kiosk; blank = auto. */
     private String issuedCode = "";
     /** Permit issuer: lock the initial endorsement code instead of auto-generating it. */
@@ -308,6 +382,169 @@ public class DeviceBlockEntity extends BlockEntity {
         return lockedEndorsementCode;
     }
 
+    public boolean lockStyle() {
+        return lockStyle;
+    }
+
+    public String lockedStyle() {
+        return lockedStyle;
+    }
+
+    public boolean lockPlace() {
+        return lockPlace;
+    }
+
+    public String lockedPlace() {
+        return lockedPlace;
+    }
+
+    public boolean lockIssueDate() {
+        return lockIssueDate;
+    }
+
+    public String lockedIssueDate() {
+        return lockedIssueDate;
+    }
+
+    public boolean lockValidity() {
+        return lockValidity;
+    }
+
+    public int lockedValidityYears() {
+        return lockedValidityYears;
+    }
+
+    public boolean lockVisaType() {
+        return lockVisaType;
+    }
+
+    public String lockedVisaType() {
+        return lockedVisaType;
+    }
+
+    public boolean lockVisaCode() {
+        return lockVisaCode;
+    }
+
+    public String lockedVisaCode() {
+        return lockedVisaCode;
+    }
+
+    public boolean lockEndorsementType() {
+        return lockEndorsementType;
+    }
+
+    public String lockedEndorsementType() {
+        return lockedEndorsementType;
+    }
+
+    /**
+     * Resolves the configured locked layout. Blank/unknown ids return {@code null}
+     * so the caller falls back to the submitted layout; the {@link #lockStyle()}
+     * flag is checked separately.
+     */
+    @Nullable
+    public DocStyle lockedStyleOrNull() {
+        String key = lockedStyle.trim();
+        if (key.isEmpty()) {
+            return null;
+        }
+        for (DocStyle candidate : DocStyle.values()) {
+            if (candidate.id().equalsIgnoreCase(key)) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the configured locked visa type. Blank/unknown ids return
+     * {@code null}; the {@link #lockVisaType()} flag is checked separately.
+     */
+    @Nullable
+    public VisaType lockedVisaTypeOrNull() {
+        return resolveVisaType(lockedVisaType);
+    }
+
+    /**
+     * Resolves the configured locked endorsement type. Blank/unknown ids return
+     * {@code null}; the {@link #lockEndorsementType()} flag is checked separately.
+     */
+    @Nullable
+    public EndorsementType lockedEndorsementTypeOrNull() {
+        return EndorsementType.byIdOrNull(lockedEndorsementType);
+    }
+
+    public void setLockStyle(boolean value) {
+        lockStyle = value;
+        changed();
+    }
+
+    public void setLockedStyle(String value) {
+        lockedStyle = value == null ? "" : value.trim();
+        changed();
+    }
+
+    public void setLockPlace(boolean value) {
+        lockPlace = value;
+        changed();
+    }
+
+    public void setLockedPlace(String value) {
+        lockedPlace = value == null ? "" : value.trim();
+        changed();
+    }
+
+    public void setLockIssueDate(boolean value) {
+        lockIssueDate = value;
+        changed();
+    }
+
+    public void setLockedIssueDate(String value) {
+        lockedIssueDate = value == null ? "" : value.trim();
+        changed();
+    }
+
+    public void setLockValidity(boolean value) {
+        lockValidity = value;
+        changed();
+    }
+
+    public void setLockedValidityYears(int value) {
+        lockedValidityYears = value;
+        changed();
+    }
+
+    public void setLockVisaType(boolean value) {
+        lockVisaType = value;
+        changed();
+    }
+
+    public void setLockedVisaType(String value) {
+        lockedVisaType = value == null ? "" : value.trim();
+        changed();
+    }
+
+    public void setLockVisaCode(boolean value) {
+        lockVisaCode = value;
+        changed();
+    }
+
+    public void setLockedVisaCode(String value) {
+        lockedVisaCode = CredentialCode.sanitize(value);
+        changed();
+    }
+
+    public void setLockEndorsementType(boolean value) {
+        lockEndorsementType = value;
+        changed();
+    }
+
+    public void setLockedEndorsementType(String value) {
+        lockedEndorsementType = value == null ? "" : value.trim();
+        changed();
+    }
+
     public void setIssuedCode(String value) {
         String cleaned = value == null ? "" : value.trim();
         issuedCode = CredentialCode.isValid(cleaned) ? cleaned : "";
@@ -327,7 +564,10 @@ public class DeviceBlockEntity extends BlockEntity {
 
     /** The full lock configuration (also used for NBT round-trip tests). */
     public Locks locks() {
-        return new Locks(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority);
+        return new Locks(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority,
+                lockStyle, lockedStyle, lockPlace, lockedPlace, lockIssueDate, lockedIssueDate,
+                lockValidity, lockedValidityYears, lockVisaType, lockedVisaType,
+                lockVisaCode, lockedVisaCode, lockEndorsementType, lockedEndorsementType);
     }
 
     public void setLockDocumentName(boolean value) {
@@ -644,6 +884,20 @@ public class DeviceBlockEntity extends BlockEntity {
         lockedDocumentName = loaded.lockedDocumentName();
         lockAuthority = loaded.lockAuthority();
         lockedAuthority = loaded.lockedAuthority();
+        lockStyle = loaded.lockStyle();
+        lockedStyle = loaded.lockedStyle();
+        lockPlace = loaded.lockPlace();
+        lockedPlace = loaded.lockedPlace();
+        lockIssueDate = loaded.lockIssueDate();
+        lockedIssueDate = loaded.lockedIssueDate();
+        lockValidity = loaded.lockValidity();
+        lockedValidityYears = loaded.lockedValidityYears();
+        lockVisaType = loaded.lockVisaType();
+        lockedVisaType = loaded.lockedVisaType();
+        lockVisaCode = loaded.lockVisaCode();
+        lockedVisaCode = loaded.lockedVisaCode();
+        lockEndorsementType = loaded.lockEndorsementType();
+        lockedEndorsementType = loaded.lockedEndorsementType();
     }
 
     @Override

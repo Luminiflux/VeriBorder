@@ -832,4 +832,117 @@ class DocumentCoreTest {
         assertEquals(List.of("12345678", "87654321"),
                 DeviceBlockEntity.normalizeGateCodes(List.of(" 12345678 ", "123", "12345678", "87654321")));
     }
+
+    @Test
+    void universalIssuerLocksRoundTripThroughNbt() {
+        DeviceBlockEntity.Locks locks = new DeviceBlockEntity.Locks(
+                true, "  Border Passport  ",
+                true, "  Border Authority ",
+                true, "  cn_passport ",
+                true, "  Shanghai ",
+                true, " 2024-02-29 ",
+                true, 5,
+                true, "  business ",
+                true, " 00112233 ",
+                true, "  one_year_multi ");
+        CompoundTag tag = new CompoundTag();
+        locks.writeTo(tag);
+
+        DeviceBlockEntity.Locks loaded = DeviceBlockEntity.Locks.fromTag(tag);
+        assertEquals(locks, loaded);
+        assertEquals("Border Passport", loaded.lockedDocumentName());
+        assertEquals("Border Authority", loaded.lockedAuthority());
+        assertEquals("cn_passport", loaded.lockedStyle());
+        assertEquals("Shanghai", loaded.lockedPlace());
+        assertEquals("2024-02-29", loaded.lockedIssueDate());
+        assertEquals(5, loaded.lockedValidityYears());
+        assertEquals("business", loaded.lockedVisaType());
+        assertEquals("00112233", loaded.lockedVisaCode());
+        assertEquals("one_year_multi", loaded.lockedEndorsementType());
+        assertTrue(loaded.lockStyle());
+        assertTrue(loaded.lockPlace());
+        assertTrue(loaded.lockIssueDate());
+        assertTrue(loaded.lockValidity());
+        assertTrue(loaded.lockVisaType());
+        assertTrue(loaded.lockVisaCode());
+        assertTrue(loaded.lockEndorsementType());
+
+        // Pre-1.2.1 NBT loads neutral defaults and never turns a lock on.
+        DeviceBlockEntity.Locks legacy = DeviceBlockEntity.Locks.fromTag(new CompoundTag());
+        assertEquals(DeviceBlockEntity.Locks.NONE, legacy);
+        assertFalse(legacy.lockStyle());
+        assertEquals("", legacy.lockedStyle());
+        assertFalse(legacy.lockPlace());
+        assertFalse(legacy.lockIssueDate());
+        assertFalse(legacy.lockValidity());
+        assertEquals(0, legacy.lockedValidityYears());
+        assertFalse(legacy.lockVisaType());
+        assertFalse(legacy.lockVisaCode());
+        assertFalse(legacy.lockEndorsementType());
+
+        // The 1.2.0 four-argument lock view remains source-compatible.
+        DeviceBlockEntity.Locks old = new DeviceBlockEntity.Locks(
+                true, " Passport ", true, " Authority ");
+        assertEquals("Passport", old.lockedDocumentName());
+        assertEquals("Authority", old.lockedAuthority());
+        assertFalse(old.lockStyle());
+        assertFalse(old.lockVisaType());
+        assertFalse(old.lockEndorsementType());
+    }
+
+    @Test
+    void lockedValidityMathTreatsZeroAsPermanentAndPositiveAsYears() {
+        assertEquals(DateUtil.PERMANENT, DocumentFactory.lockedExpiry("2024-03-01", 0));
+        assertEquals(DateUtil.PERMANENT, DocumentFactory.lockedExpiry("2024-03-01", -3));
+        assertEquals("2029-03-01", DocumentFactory.lockedExpiry("2024-03-01", 5));
+        assertEquals("2025-02-28", DocumentFactory.lockedExpiry("2024-02-29", 1),
+                "leap-day issue dates clamp like LocalDate.plusYears");
+        assertEquals(DateUtil.plusYears(DateUtil.today(), 2),
+                DocumentFactory.lockedExpiry("not-a-date", 2),
+                "an unusable issue date falls back to today");
+    }
+
+    @Test
+    void passportAttachedVisaInheritsPassportDatesAndKeepsLockedCode() {
+        DocumentData passport = DocumentFactory.sample(DocStyle.CN_PASSPORT);
+        passport.clearVisas();
+        int before = passport.visas().size();
+
+        CompoundTag visa = DocumentFactory.createAttachedVisa(passport, "Schengen", VisaType.BUSINESS,
+                2, "Border Authority", "00112233");
+        passport.addVisaExact(visa);
+
+        List<VisaRecord> visas = passport.visas();
+        assertEquals(before + 1, visas.size());
+        VisaRecord record = visas.get(visas.size() - 1);
+        assertEquals("Schengen", record.country());
+        assertEquals(VisaType.BUSINESS, record.type());
+        assertEquals(2, record.entries());
+        assertEquals("00112233", record.code(), "a locked explicit code is preserved verbatim");
+        assertEquals(passport.issueDate(), record.issueDate(), "issue date is inherited");
+        assertEquals(passport.expiryDate(), record.expiryDate(), "expiry date is inherited");
+        assertEquals("Border Authority", record.authority());
+        assertTrue(record.active());
+        assertTrue(passport.integrityValid());
+
+        DocumentData reloaded = DocumentData.fromTag(passport.copyTag());
+        assertTrue(reloaded.integrityValid());
+        assertEquals(visas.size(), reloaded.visas().size());
+        assertEquals("00112233", reloaded.visas().get(visas.size() - 1).code());
+
+        // A permanent passport expiry falls back to one year after issue.
+        passport.setExpiryDate(DateUtil.PERMANENT);
+        CompoundTag fallback = DocumentFactory.createAttachedVisa(passport, "Japan", VisaType.TOURIST,
+                1, "Embassy", "");
+        assertEquals(passport.issueDate(), fallback.getString("issueDate"));
+        assertEquals(DateUtil.plusYears(passport.issueDate(), 1), fallback.getString("expiryDate"));
+        assertTrue(CredentialCode.isValid(fallback.getString("code")), "blank code is auto-generated");
+
+        // An unusable passport expiry is repaired the same way, never copied.
+        passport.setExpiryDate("not-a-date");
+        CompoundTag repaired = DocumentFactory.createAttachedVisa(passport, "Korea", VisaType.STUDENT,
+                1, "Embassy", "00112233");
+        assertEquals(DateUtil.plusYears(passport.issueDate(), 1), repaired.getString("expiryDate"));
+        assertEquals("00112233", repaired.getString("code"));
+    }
 }

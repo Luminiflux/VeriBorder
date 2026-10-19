@@ -32,9 +32,15 @@ public class EndorsementScreen extends VeriScreen {
     private final boolean lockAuthority;
     private final String lockedAuthority;
     private final String machineAuthority;
+    private final boolean lockEndorsementType;
+    private final EndorsementType lockedEndorsementType;
+    private final boolean lockIssueDate;
+    private final String lockedIssueDate;
+    private final boolean lockValidity;
+    private final int lockedValidityYears;
     private final List<CompoundTag> templates = new ArrayList<>();
     private int templateIndex;
-    private EndorsementType type = EndorsementType.ONE_YEAR_MULTI;
+    private EndorsementType type;
     private EditBox entries;
     private EditBox issue;
     private EditBox expiry;
@@ -58,6 +64,15 @@ public class EndorsementScreen extends VeriScreen {
         this.lockAuthority = payload.getBoolean("lockAuthority") && !lockedAuthority.isBlank();
         String machine = payload.getString("machineAuthority").trim();
         this.machineAuthority = machine.isBlank() ? lockedAuthority : machine;
+        EndorsementType resolvedType = EndorsementType.byIdOrNull(payload.getString("lockedEndorsementType"));
+        this.lockedEndorsementType = resolvedType == null ? EndorsementType.ONE_YEAR_MULTI : resolvedType;
+        this.lockEndorsementType = payload.getBoolean("lockEndorsementType") && resolvedType != null;
+        String issueDate = payload.getString("lockedIssueDate").trim();
+        this.lockedIssueDate = issueDate;
+        this.lockIssueDate = payload.getBoolean("lockIssueDate") && DateUtil.isValid(issueDate);
+        this.lockValidity = payload.getBoolean("lockValidity");
+        this.lockedValidityYears = payload.getInt("lockedValidityYears");
+        this.type = lockEndorsementType ? lockedEndorsementType : EndorsementType.ONE_YEAR_MULTI;
         ListTag list = payload.getList("presets", Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
             templates.add(list.getCompound(i));
@@ -79,32 +94,61 @@ public class EndorsementScreen extends VeriScreen {
     private void buildSelfService() {
         typeButton = addRenderableWidget(new BetterButton(left + 222, top + 100, 274, 22,
                 Component.translatable(type.translationKey()), button -> {
+                    if (lockEndorsementType) {
+                        return;
+                    }
                     type = type.next();
                     button.setMessage(Component.translatable(type.translationKey()));
                 }, Ui.PURPLE, true));
+        if (lockEndorsementType) {
+            typeButton.active = false;
+        }
         addRenderableWidget(new BetterButton(left + 222, top + 136, 274, 24,
                 Component.translatable("button.veriborder.issue_endorsement"), button -> issue(), Ui.GREEN));
     }
 
     private void buildStaff() {
+        String issueValue = lockIssueDate ? lockedIssueDate : DateUtil.today();
         typeButton = addRenderableWidget(new BetterButton(left + 222, top + 86, 170, 20,
                 Component.translatable(type.translationKey()), button -> {
+                    if (lockEndorsementType) {
+                        return;
+                    }
                     String previousDefault = String.valueOf(type.defaultEntries());
                     type = type.next();
                     if (entries != null && entries.getValue().trim().equals(previousDefault)) {
                         entries.setValue(String.valueOf(type.defaultEntries()));
                     }
-                    if (DateUtil.isValid(issue.getValue())) {
-                        expiry.setValue(DocumentFactory.endorsementExpiry(type, issue.getValue()));
+                    if (issue != null && DateUtil.isValid(issue.getValue())) {
+                        expiry.setValue(expiryFor(issue.getValue()));
                     }
                     button.setMessage(Component.translatable(type.translationKey()));
                 }, Ui.PURPLE, true));
+        if (lockEndorsementType) {
+            typeButton.active = false;
+        }
         entries = addField(left + 404, top + 90, 92, "field.veriborder.entries",
                 String.valueOf(type.defaultEntries()), "hint.veriborder.unlimited");
-        issue = addField(left + 222, top + 126, 170, "field.veriborder.issue", DateUtil.today(),
-                "hint.veriborder.date");
+        issue = addField(left + 222, top + 126, 170, "field.veriborder.issue", issueValue,
+                lockIssueDate ? "hint.veriborder.locked" : "hint.veriborder.date");
+        if (lockIssueDate) {
+            issue.setValue(lockedIssueDate);
+            issue.setEditable(false);
+        }
         expiry = addField(left + 400, top + 126, 96, "field.veriborder.expiry",
-                DocumentFactory.endorsementExpiry(type, DateUtil.today()), "hint.veriborder.date");
+                lockValidity ? autoExpiry(issueValue) : DocumentFactory.endorsementExpiry(type, issueValue),
+                lockValidity ? "hint.veriborder.auto_years" : "hint.veriborder.date");
+        if (lockValidity) {
+            expiry.setValue(autoExpiry(issueValue));
+            expiry.setEditable(false);
+            // Follow an unlocked issue-date edit for display; the server is
+            // still authoritative when the endorsement is issued.
+            issue.setResponder(value -> {
+                if (expiry != null) {
+                    expiry.setValue(autoExpiry(value));
+                }
+            });
+        }
         authority = addField(left + 222, top + 162, 274, "field.veriborder.authority",
                 lockAuthority ? lockedAuthority : "Exit-Entry Administration",
                 lockAuthority ? "hint.veriborder.locked" : null);
@@ -135,6 +179,22 @@ public class EndorsementScreen extends VeriScreen {
                 Component.translatable("button.veriborder.renew_endorsement"), button -> renewSelected(), Ui.AMBER));
         addRenderableWidget(new BetterButton(left + 112, top + 304, 82, 20,
                 Component.translatable("button.veriborder.revoke_endorsement"), button -> revokeSelected(), Ui.RED));
+    }
+
+    private String autoExpiry(String issueDate) {
+        return lockedValidityYears <= 0 ? DateUtil.PERMANENT
+                : DateUtil.plusYears(issueDate, lockedValidityYears);
+    }
+
+    private String validityYearsText() {
+        return lockedValidityYears <= 0
+                ? Component.translatable("date.veriborder.permanent").getString()
+                : Component.translatable("screen.veriborder.years", lockedValidityYears).getString();
+    }
+
+    private String expiryFor(String issueDate) {
+        return lockValidity ? autoExpiry(issueDate)
+                : DocumentFactory.endorsementExpiry(type, issueDate);
     }
 
     private void renewSelected() {
@@ -189,11 +249,23 @@ public class EndorsementScreen extends VeriScreen {
             return;
         }
         CompoundTag values = templates.get(Math.floorMod(templateIndex, templates.size())).getCompound("values");
-        type = EndorsementType.byId(values.getString("type"));
+        if (!lockEndorsementType) {
+            type = EndorsementType.byId(values.getString("type"));
+        } else {
+            type = lockedEndorsementType;
+        }
         entries.setValue(String.valueOf(values.contains("entries") ? values.getInt("entries") : type.defaultEntries()));
-        issue.setValue(DateUtil.isValid(values.getString("issueDate")) ? values.getString("issueDate") : DateUtil.today());
-        expiry.setValue(DateUtil.isValid(values.getString("expiryDate")) ? values.getString("expiryDate")
-                : DocumentFactory.endorsementExpiry(type, issue.getValue()));
+        if (!lockIssueDate) {
+            issue.setValue(DateUtil.isValid(values.getString("issueDate")) ? values.getString("issueDate") : DateUtil.today());
+        } else {
+            issue.setValue(lockedIssueDate);
+        }
+        if (lockValidity) {
+            expiry.setValue(autoExpiry(issue.getValue()));
+        } else {
+            expiry.setValue(DateUtil.isValid(values.getString("expiryDate")) ? values.getString("expiryDate")
+                    : DocumentFactory.endorsementExpiry(type, issue.getValue()));
+        }
         if (!lockAuthority) {
             authority.setValue(values.getString("authority"));
         } else {
@@ -285,6 +357,17 @@ public class EndorsementScreen extends VeriScreen {
         if (selfService) {
             Ui.wrapped(graphics, Component.translatable("screen.veriborder.endorsement.self"),
                     left + 222, top + 174, 274, Ui.MUTED, 2);
+            if (lockEndorsementType) {
+                Ui.clipped(graphics, Component.translatable("screen.veriborder.endorsement.self_locked",
+                                Component.translatable(type.translationKey()).getString()),
+                        left + 222, top + 160, 274, Ui.CYAN);
+            }
+            if (lockValidity) {
+                String issueValue = lockIssueDate ? lockedIssueDate : DateUtil.today();
+                Ui.clipped(graphics, Component.translatable("screen.veriborder.lock.validity_line",
+                                validityYearsText(), autoExpiry(issueValue)),
+                        left + 222, top + 224, 274, Ui.AMBER);
+            }
             Ui.clipped(graphics, Component.translatable("screen.veriborder.endorsement.self_code"),
                     left + 222, top + 200, 274, Ui.DIM);
             if (!machineAuthority.isBlank()) {
@@ -292,6 +375,11 @@ public class EndorsementScreen extends VeriScreen {
                         machineAuthority), left + 222, top + 212, 274, Ui.CYAN);
             }
             return;
+        }
+        if (lockValidity) {
+            Ui.clipped(graphics, Component.translatable("screen.veriborder.lock.validity_line",
+                            validityYearsText(), expiry == null ? "" : expiry.getValue()),
+                    left + 222, top + 66, 274, Ui.AMBER);
         }
         Ui.clipped(graphics, Component.translatable("screen.veriborder.endorsement.hint"), left + 222, top + 54,
                 274, Ui.MUTED);

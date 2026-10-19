@@ -4,6 +4,32 @@ Date: 2026-10-17
 Environment: Minecraft 1.20.1 / Forge 47.2.0 / Java 17.0.20.1 (Azul)  
 Project: `C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder`
 
+## 1.2.1 passport-attached visa / universal locks verification
+
+```text
+DocumentCoreTest: 46 tests, 0 failures
+FeatureSmoke121:  30/30 PASS
+```
+
+Real Forge client (`run/smoke-121/result.txt`):
+
+- Passport Issuer locks: style HK passport, place `LOCK PLACE`, issue date
+  `2020-05-06`, validity 7 years (`2027-05-06`), authority `LOCK AUTH`; malicious form
+  values were overridden.
+- Passport attached visa: exactly one visa in the new passport NBT; country
+  `LOCK PLACE`, type `business`, code `00001234`, entries 9, issue/expiry inherited
+  from the passport.
+- Self-service visa: type `student`, country `MACHINE LAND`, issue `2021-01-01`,
+  expiry `2024-01-01`, code `00002222`, ignoring player fields.
+- Self-service endorsement: type `other`, issue `2022-02-02`, expiry `2024-02-02`,
+  code `00003333`.
+- Passport GUI: style button disabled, visa include/country/code/entries widgets present;
+  passport/config/self-visa/world renders magenta=0.
+- Standalone Visa Issuing Terminal code path remains unchanged.
+- 1.2.0-hotfix2 E-Gate 2-block collision remains present.
+
+---
+
 ## 1.2.0-hotfix2 gate jump-over collision
 
 Problem: the E-Gate collision was only one block high (`Shapes.block()`), so a

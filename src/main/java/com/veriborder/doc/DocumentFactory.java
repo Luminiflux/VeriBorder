@@ -178,6 +178,35 @@ public final class DocumentFactory {
         return tag;
     }
 
+    /**
+     * Expiry implied by a locked validity period: zero or a negative number means
+     * permanent, otherwise the issue date plus that many years. An unusable issue
+     * date is handled by {@link DateUtil#plusYears(String, int)} (today).
+     */
+    public static String lockedExpiry(String issueDate, int years) {
+        return years <= 0 ? DateUtil.PERMANENT : DateUtil.plusYears(issueDate, years);
+    }
+
+    /**
+     * Creates the optional visa attached to a newly issued passport. The visa
+     * inherits the passport's issue date and, when the passport expiry is a real
+     * date, that expiry; a permanent (or unusable) passport expiry falls back to
+     * one year after issue as required by the 1.2.1 contract.
+     */
+    public static CompoundTag createAttachedVisa(DocumentData passport, String country, VisaType type,
+                                                 int entries, String authority, String code) {
+        String issue = DateUtil.isValid(passport.issueDate())
+                ? passport.issueDate().trim() : DateUtil.today();
+        String expiry = passport.expiryDate() == null ? "" : passport.expiryDate().trim();
+        if (!DateUtil.isValid(expiry) || DateUtil.isPermanent(expiry)) {
+            expiry = DateUtil.plusYears(issue, 1);
+        }
+        return createVisa(country == null ? "" : country.trim(),
+                type == null ? VisaType.TOURIST : type,
+                entries, issue, expiry,
+                authority == null ? "" : authority.trim(), code);
+    }
+
     public static CompoundTag createEndorsement(EndorsementType type, int entries,
                                                 String issueDate, String expiryDate, String authority) {
         return createEndorsement(type, entries, issueDate, expiryDate, authority, "");

@@ -526,6 +526,7 @@ public final class DeviceService {
                         device.setLockEndorsementCode(data.getBoolean("lockEndorsementCode"));
                         device.setLockedEndorsementCode(data.getString("lockedEndorsementCode"));
                     }
+                    applyIssuerLockConfig(device, data);
                 }
                 message(player, "message.veriborder.config.saved");
                 // The client closes the brush config screen after saving; do not
@@ -557,6 +558,48 @@ public final class DeviceService {
         return copy;
     }
 
+    /**
+     * Persists the per-device-type 1.2.1 lock fields from the brush config
+     * payload. Reading a key only for the device kinds that actually show the
+     * control keeps a value that is not part of this screen untouched.
+     */
+    private static void applyIssuerLockConfig(DeviceBlockEntity device, CompoundTag data) {
+        DeviceType type = device.deviceType();
+        boolean documentIssuer = type == DeviceType.ID_ISSUER
+                || type == DeviceType.PASSPORT_ISSUER
+                || type == DeviceType.PERMIT_ISSUER;
+        boolean visaIssuer = type == DeviceType.VISA_ISSUER
+                || type == DeviceType.SELF_VISA
+                || type == DeviceType.PASSPORT_ISSUER;
+        boolean endorsementIssuer = type == DeviceType.ENDORSEMENT_MACHINE
+                || type == DeviceType.SELF_ENDORSEMENT;
+        if (documentIssuer) {
+            device.setLockStyle(data.getBoolean("lockStyle"));
+            device.setLockedStyle(data.getString("lockedStyle"));
+        }
+        if (visaIssuer) {
+            // PASSPORT_ISSUER also locks the visa attached on issue.
+            device.setLockVisaType(data.getBoolean("lockVisaType"));
+            device.setLockedVisaType(data.getString("lockedVisaType"));
+            device.setLockVisaCode(data.getBoolean("lockVisaCode"));
+            device.setLockedVisaCode(data.getString("lockedVisaCode"));
+        }
+        if (documentIssuer || visaIssuer) {
+            device.setLockPlace(data.getBoolean("lockPlace"));
+            device.setLockedPlace(data.getString("lockedPlace"));
+        }
+        if (documentIssuer || visaIssuer || endorsementIssuer) {
+            device.setLockIssueDate(data.getBoolean("lockIssueDate"));
+            device.setLockedIssueDate(data.getString("lockedIssueDate"));
+            device.setLockValidity(data.getBoolean("lockValidity"));
+            device.setLockedValidityYears(data.getInt("lockedValidityYears"));
+        }
+        if (endorsementIssuer) {
+            device.setLockEndorsementType(data.getBoolean("lockEndorsementType"));
+            device.setLockedEndorsementType(data.getString("lockedEndorsementType"));
+        }
+    }
+
     private static void issueDocument(ServerPlayer player, DeviceBlockEntity device, CompoundTag data) {
         DeviceType type = device.deviceType();
         DocumentKind expected = switch (type) {
@@ -577,34 +620,55 @@ public final class DeviceService {
             return;
         }
         DocStyle style = DocStyle.byId(data.getString("style"));
-        if (style.kind() != expected) {
+        DocStyle lockedStyle = device.lockedStyleOrNull();
+        if (device.lockStyle() && lockedStyle != null && lockedStyle.kind() == expected) {
+            // A valid lock replaces the submitted layout; a malicious client
+            // cannot switch an ID issuer to a passport layout.
+            style = lockedStyle;
+        } else if (style.kind() != expected) {
             message(player, "message.veriborder.issuer.wrong_style");
             return;
         }
         // Locked issuer fields are enforced server-side before the factory reads
         // the form, so a client that ignores the lock still cannot issue a
-        // different document name or authority.
+        // different document name, authority, place or date.
+        CompoundTag form = data.copy();
         if (device.lockDocumentName() && !device.lockedDocumentName().isBlank()) {
-            data.putString("displayName", device.lockedDocumentName());
+            form.putString("displayName", device.lockedDocumentName());
         }
         if (device.lockAuthority() && !device.lockedAuthority().isBlank()) {
-            data.putString("authority", device.lockedAuthority());
+            form.putString("authority", device.lockedAuthority());
         }
-        DocumentData doc = DocumentFactory.fromForm(style, data);
-        if (expected == DocumentKind.PERMIT && data.contains("initialEndorsementType")
-                && !data.getString("initialEndorsementType").isBlank()) {
-            EndorsementType endorsementType = EndorsementType.byId(data.getString("initialEndorsementType"));
-            String today = DateUtil.today();
+        if (device.lockPlace() && !device.lockedPlace().isBlank()) {
+            form.putString("placeOfIssue", device.lockedPlace());
+        }
+        if (device.lockIssueDate() && DateUtil.isValid(device.lockedIssueDate())) {
+            form.putString("issueDate", device.lockedIssueDate());
+        }
+        form.putString("style", style.id());
+        DocumentData doc = DocumentFactory.fromForm(style, form);
+        if (device.lockValidity()) {
+            // 0/permanent styles stay permanent; positive years win over the
+            // style default and over any form-supplied expiry date.
+            doc.setExpiryDate(DocumentFactory.lockedExpiry(doc.issueDate(), device.lockedValidityYears()));
+        }
+        if (expected == DocumentKind.PERMIT && form.contains("initialEndorsementType")
+                && !form.getString("initialEndorsementType").isBlank()) {
+            EndorsementType endorsementType = EndorsementType.byId(form.getString("initialEndorsementType"));
+            String today = device.lockIssueDate() && DateUtil.isValid(device.lockedIssueDate())
+                    ? device.lockedIssueDate() : DateUtil.today();
             String authority = device.lockAuthority() && !device.lockedAuthority().isBlank()
                     ? device.lockedAuthority() : style.defaultAuthority();
             boolean fixedCode = device.lockEndorsementCode()
                     && CredentialCode.isValid(device.lockedEndorsementCode());
             String code = fixedCode ? device.lockedEndorsementCode()
-                    : CredentialCode.isValid(data.getString("initialEndorsementCode"))
-                    ? data.getString("initialEndorsementCode") : "";
+                    : CredentialCode.isValid(form.getString("initialEndorsementCode"))
+                    ? form.getString("initialEndorsementCode") : "";
+            String initialExpiry = device.lockValidity()
+                    ? DocumentFactory.lockedExpiry(today, device.lockedValidityYears())
+                    : DocumentFactory.endorsementExpiry(endorsementType, today);
             CompoundTag initial = DocumentFactory.createEndorsement(endorsementType,
-                    endorsementType.defaultEntries(), today,
-                    DocumentFactory.endorsementExpiry(endorsementType, today), authority, code);
+                    endorsementType.defaultEntries(), today, initialExpiry, authority, code);
             if (fixedCode) {
                 // The issuer's locked initial-endorsement code is used verbatim,
                 // even if the permit already carries a record with the same code.
@@ -612,6 +676,11 @@ public final class DeviceService {
             } else {
                 doc.addEndorsement(initial);
             }
+        }
+        if (expected == DocumentKind.PASSPORT && form.getBoolean("includeVisa")) {
+            // The visa is appended after the passport exists (and is signed) but
+            // before the item stack is written, so it travels in the same NBT.
+            appendPassportVisa(device, style, form, doc);
         }
         Item item = switch (expected) {
             case ID_CARD -> ModItems.ID_CARD.get();
@@ -626,6 +695,36 @@ public final class DeviceService {
         player.level().playSound(null, player.blockPosition(), SoundEvents.VILLAGER_WORK_CARTOGRAPHER,
                 SoundSource.PLAYERS, 0.7F, 1.1F);
         message(player, "message.veriborder.issuer.issued", Component.translatable(style.displayNameKey()), doc.number());
+    }
+
+    /**
+     * Appends the optional visa carried by a newly issued passport. Locked place,
+     * visa type and visa code win over the submitted form; dates are inherited
+     * from the finished passport. A locked code is preserved verbatim
+     * ({@code addVisaExact}), otherwise the code is kept unique ({@code addVisa}).
+     */
+    private static void appendPassportVisa(DeviceBlockEntity device, DocStyle style, CompoundTag form,
+                                           DocumentData passport) {
+        VisaType lockedType = device.lockedVisaTypeOrNull();
+        VisaType visaType = device.lockVisaType() && lockedType != null
+                ? lockedType : VisaType.byId(form.getString("visaType"));
+        String country = device.lockPlace() && !device.lockedPlace().isBlank()
+                ? device.lockedPlace() : form.getString("visaCountry").trim();
+        if (country.isBlank()) {
+            country = style.defaultNationality();
+        }
+        boolean fixedCode = device.lockVisaCode() && CredentialCode.isValid(device.lockedVisaCode());
+        String code = fixedCode ? device.lockedVisaCode() : CredentialCode.sanitize(form.getString("visaCode"));
+        int entries = form.contains("visaEntries") ? Math.max(0, form.getInt("visaEntries")) : 1;
+        String authority = device.lockAuthority() && !device.lockedAuthority().isBlank()
+                ? device.lockedAuthority() : passport.authority();
+        CompoundTag visa = DocumentFactory.createAttachedVisa(passport, country, visaType, entries,
+                authority, code);
+        if (fixedCode) {
+            passport.addVisaExact(visa);
+        } else {
+            passport.addVisa(visa);
+        }
     }
 
     private static void issueVisa(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, CompoundTag data,
@@ -645,15 +744,27 @@ public final class DeviceService {
         String authority = visaAuthority(device, data.getString("authority"));
         boolean authorityLocked = device.lockAuthority() && !device.lockedAuthority().isBlank();
         boolean selfService = device.deviceType() == DeviceType.SELF_VISA;
+        VisaType lockedType = device.lockedVisaTypeOrNull();
         if (selfService) {
-            // The kiosk exposes only the visa type. Country, authority, dates,
-            // entries and code are machine/admin parameters.
-            VisaType type = VisaType.byId(data.getString("type"));
-            String code = CredentialCode.isValid(device.issuedCode())
-                    ? device.issuedCode() : CredentialCode.generateUnique(doc.allCredentialCodes());
-            String country = device.country().isBlank() ? "中国" : device.country();
-            String issue = DateUtil.today();
-            String expiry = DateUtil.plusYears(issue, 1);
+            // The kiosk exposes only the visa type (unless locked). Country,
+            // authority, dates, entries and code are machine/admin parameters.
+            VisaType type = device.lockVisaType() && lockedType != null
+                    ? lockedType : VisaType.byId(data.getString("type"));
+            // The 1.2.0 machine code stays authoritative; a 1.2.1 locked visa
+            // code is honoured when the machine has no fixed code of its own.
+            String fixedCode = CredentialCode.isValid(device.issuedCode())
+                    ? device.issuedCode()
+                    : device.lockVisaCode() && CredentialCode.isValid(device.lockedVisaCode())
+                    ? device.lockedVisaCode() : "";
+            String code = fixedCode.isBlank()
+                    ? CredentialCode.generateUnique(doc.allCredentialCodes()) : fixedCode;
+            String country = device.lockPlace() && !device.lockedPlace().isBlank()
+                    ? device.lockedPlace()
+                    : device.country().isBlank() ? "中国" : device.country();
+            String issue = lockedIssueDate(device, DateUtil.today());
+            String expiry = device.lockValidity()
+                    ? DocumentFactory.lockedExpiry(issue, device.lockedValidityYears())
+                    : DateUtil.plusYears(issue, 1);
             CompoundTag values = new CompoundTag();
             values.putString("country", country);
             values.putString("type", type.id());
@@ -673,11 +784,12 @@ public final class DeviceService {
         if (allTemplates) {
             ListTag presets = device.presets();
             // Every template gets its own generated code; one code is never copied
-            // across the batch.
+            // across the batch. Locked type/place/date/validity apply to each one.
             List<String> used = new ArrayList<>(doc.allCredentialCodes());
             int count = 0;
             for (int i = 0; i < presets.size(); i++) {
-                CompoundTag values = presets.getCompound(i).getCompound("values");
+                CompoundTag values = applyVisaLocks(device,
+                        presets.getCompound(i).getCompound("values"));
                 String code = CredentialCode.generateUnique(used);
                 used.add(code);
                 doc.addVisa(toVisa(values, authority, code, authorityLocked));
@@ -685,15 +797,26 @@ public final class DeviceService {
             }
             message(player, "message.veriborder.visa.batch", count);
         } else {
-            String requested = data.getString("code");
+            CompoundTag form = applyVisaLocks(device, data);
+            boolean fixedCode = device.lockVisaCode() && CredentialCode.isValid(device.lockedVisaCode());
+            String requested = fixedCode ? device.lockedVisaCode() : form.getString("code");
             String code = CredentialCode.isValid(requested) ? requested.trim()
                     : CredentialCode.generateUnique(doc.allCredentialCodes());
-            if (CredentialCode.isValid(requested) && doc.allCredentialCodes().contains(code)) {
+            if (!fixedCode && CredentialCode.isValid(requested)
+                    && doc.allCredentialCodes().contains(code)) {
                 message(player, "message.veriborder.code.duplicate");
                 return;
             }
-            doc.addVisa(toVisa(data, authority, code, authorityLocked));
-            message(player, "message.veriborder.visa.issued", data.getString("country"));
+            CompoundTag visa = toVisa(form, authority, code, authorityLocked);
+            if (fixedCode) {
+                // An admin-locked code is used verbatim, like a kiosk code.
+                doc.addVisaExact(visa);
+            } else {
+                doc.addVisa(visa);
+            }
+            String country = form.getString("country");
+            message(player, "message.veriborder.visa.issued",
+                    country.isBlank() ? doc.nationality() : country);
         }
         DocumentItem.writeDocument(stack, doc);
         sync(player, slot, stack);
@@ -713,6 +836,37 @@ public final class DeviceService {
                 Math.max(0, data.getInt("entries")), issue, expiry, authority, code);
     }
 
+    /**
+     * Applies the issuer's visa locks to a submitted form or template. The
+     * returned copy carries the forced type/country/issue date and, when
+     * validity is locked, the expiry implied by {@link DocumentFactory#lockedExpiry}.
+     */
+    private static CompoundTag applyVisaLocks(DeviceBlockEntity device, CompoundTag values) {
+        CompoundTag form = values.copy();
+        VisaType lockedType = device.lockedVisaTypeOrNull();
+        if (device.lockVisaType() && lockedType != null) {
+            form.putString("type", lockedType.id());
+        }
+        if (device.lockPlace() && !device.lockedPlace().isBlank()) {
+            form.putString("country", device.lockedPlace());
+        }
+        if (device.lockIssueDate() && DateUtil.isValid(device.lockedIssueDate())) {
+            form.putString("issueDate", device.lockedIssueDate());
+        }
+        if (device.lockValidity()) {
+            String issue = DateUtil.isValid(form.getString("issueDate"))
+                    ? form.getString("issueDate") : DateUtil.today();
+            form.putString("expiryDate", DocumentFactory.lockedExpiry(issue, device.lockedValidityYears()));
+        }
+        return form;
+    }
+
+    /** The locked issue date when enabled and valid, otherwise {@code fallback}. */
+    private static String lockedIssueDate(DeviceBlockEntity device, String fallback) {
+        return device.lockIssueDate() && DateUtil.isValid(device.lockedIssueDate())
+                ? device.lockedIssueDate().trim() : fallback;
+    }
+
     private static void issueEndorsement(ServerPlayer player, BlockPos pos, DeviceBlockEntity device,
                                          CompoundTag data, int slot) {
         ItemStack stack = stackAt(player, slot);
@@ -728,7 +882,9 @@ public final class DeviceService {
             return;
         }
         boolean selfService = device.deviceType() == DeviceType.SELF_ENDORSEMENT;
-        EndorsementType type = EndorsementType.byId(data.getString("type"));
+        EndorsementType lockedType = device.lockedEndorsementTypeOrNull();
+        EndorsementType type = device.lockEndorsementType() && lockedType != null
+                ? lockedType : EndorsementType.byId(data.getString("type"));
         String issue;
         String expiry;
         int entries;
@@ -736,17 +892,24 @@ public final class DeviceService {
         String code;
         if (selfService) {
             // Self-service kiosks ignore every player-supplied field: only the
-            // preset endorsement type is honoured, with type defaults + today and
-            // the machine's own authority/code.
-            issue = DateUtil.today();
-            expiry = DocumentFactory.endorsementExpiry(type, issue);
+            // preset endorsement type is honoured (unless locked), with type
+            // defaults + today and the machine's own authority/code.
+            issue = lockedIssueDate(device, DateUtil.today());
+            expiry = device.lockValidity()
+                    ? DocumentFactory.lockedExpiry(issue, device.lockedValidityYears())
+                    : DocumentFactory.endorsementExpiry(type, issue);
             entries = type.defaultEntries();
             authority = machineAuthority(device);
             code = CredentialCode.isValid(device.issuedCode()) ? device.issuedCode() : "";
         } else {
-            issue = DateUtil.isValid(data.getString("issueDate")) ? data.getString("issueDate") : DateUtil.today();
-            expiry = DateUtil.isValid(data.getString("expiryDate"))
-                    ? data.getString("expiryDate") : DocumentFactory.endorsementExpiry(type, issue);
+            issue = lockedIssueDate(device,
+                    DateUtil.isValid(data.getString("issueDate")) ? data.getString("issueDate") : DateUtil.today());
+            if (device.lockValidity()) {
+                expiry = DocumentFactory.lockedExpiry(issue, device.lockedValidityYears());
+            } else {
+                expiry = DateUtil.isValid(data.getString("expiryDate"))
+                        ? data.getString("expiryDate") : DocumentFactory.endorsementExpiry(type, issue);
+            }
             entries = data.contains("entries") ? data.getInt("entries") : type.defaultEntries();
             authority = endorsementAuthority(device, data.getString("authority"));
             code = CredentialCode.isValid(data.getString("code")) ? data.getString("code").trim() : "";

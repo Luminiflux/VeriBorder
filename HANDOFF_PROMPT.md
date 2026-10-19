@@ -18,20 +18,31 @@ C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder
 
 当前状态：
 - 作者：Luminiflux
-- 版本：1.2.0-hotfix2
+- 版本：1.2.1
 - 目标：Minecraft 1.20.1 / Forge 47.x / Java 17
-- 成品：dist/veriborder-1.2.0-hotfix2.jar
-- 源码包：dist/veriborder-1.2.0-hotfix2-src.zip
-- 43 个 DocumentCoreTest 测试通过
+- 成品：dist/veriborder-1.2.1.jar
+- 源码包：dist/veriborder-1.2.1-src.zip
+- 46 个 DocumentCoreTest 测试通过
 - 21 个设备模型（18 原有 + exit_gate + self_endorsement + self_visa）、21 blockstate、254 张 block 贴图、26 条配方
 - tools/preview_models.js CHECKLIST: FAILURES: none
-- 真实客户端 1.2.0 功能验收记录见 VERIFICATION.md（自助签证机/固定 code/签注 code 锁定/UI 隔离）
+- 真实客户端 1.2.1 功能验收记录见 VERIFICATION.md（附带签证/全发行机锁字段）
+- 1.2.1：护照发行机可选附带签证，护照版式/签发地/签发日期/有效期/签证类型/编码、
+  签注类型均可锁定；自助机同样生效
 - 1.2.0-hotfix2：闸机碰撞墙提升到 2 格高，关闭时完整阻挡，打开时中央 12px
   通道保持通行，两侧柜体碰撞也提高到 2 格，防止跳上闸机顶部越境
 - 1.2.0-hotfix：创造栏改为 BuildCreativeModeTabContentsEvent 延迟填充，修复
   `Registry Object not present: veriborder:self_visa` 崩溃
 - 不依赖任何外部交通模组；不要加入外部模组依赖
 - 所有证件数据继续存物品 NBT；设备配置/预设存 BlockEntity NBT
+
+1.2.1 功能：
+- PASSPORT_ISSUER 可选 includeVisa：护照生成时同步写入签证（country/type/code/entries），
+  日期继承护照；仍保留独立 VISA_ISSUER 事后贴签。
+- 新增锁定：lockStyle/lockedStyle、lockPlace/lockedPlace、lockIssueDate/lockedIssueDate、
+  lockValidity/lockedValidityYears、lockVisaType/lockedVisaType、lockVisaCode/lockedVisaCode、
+  lockEndorsementType/lockedEndorsementType。
+- 服务端强制锁字段；客户端只读；0 年有效期 = permanent；正数 = issue+years。
+- 自助签证/签注机类型锁定后玩家不能改；仍然只显示最少控件。
 
 1.2.0 功能：
 - 新增 SELF_VISA 自助签证机：玩家只选签证类型 + 签发；国家/机关/日期/entries/code

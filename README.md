@@ -2,8 +2,16 @@
 
 **VeriBorder / 证界边检** is a Minecraft **1.20.1 Forge** mod by **Luminiflux** that recreates the complete real-world document chain — identity cards, passports, exit-entry permits, visas, endorsements and immigration stamps — together with the machines found in airports, land ports, hotels, government service halls and immigration halls.
 
-**Current release:** `1.2.0-hotfix2`.
+**Current release:** `1.2.1`.
 
+> **1.2.1 feature update — passport-attached visas and universal issuer locks.**
+>
+> - The Passport Issuer now has an optional **visa panel**: include a visa in the passport at creation, with country, visa type, 8-digit code and entries. The visa is written into the passport NBT in the same operation.
+> - Passport layout/style, place of issue, issue date and validity years can be **locked** in the brush config. The five passport layouts are selectable and lockable.
+> - All issuer types (document, visa, endorsement, and self-service kiosks) support locked document/visa/endorsement type, place/country, issue date and validity years. Locked validity auto-calculates the expiry date; 0 means permanent.
+> - Attached-visa type and code can be locked on the Passport Issuer. Locked code is used verbatim; unlocked blank code stays auto-unique.
+> - Standalone Visa Issuing Terminal is unchanged: apply a visa to a passport later with right-click.
+>
 > **1.2.0-hotfix2:** the E-Gate now has a full-height collision wall. Closed gates block two blocks of height; open gates keep the 12 px centre passage clear but raise both side cabinets to the same height. This prevents jumping onto the gate top and crossing the border.
 >
 > **1.2.0-hotfix:** fixed a startup/creative-inventory crash caused by filling the creative tab from the `displayItems` lambda before every device item's `RegistryObject` was present. Creative contents now come from Forge's `BuildCreativeModeTabContentsEvent` after registries are ready, with an `isPresent()` guard. The crash was `Registry Object not present: veriborder:self_visa`.
@@ -74,7 +82,7 @@ gradlew.bat build
 The reobfuscated mod jar is produced at:
 
 ```text
-build/libs/veriborder-1.2.0-hotfix2.jar
+build/libs/veriborder-1.2.1.jar
 ```
 
 The project also contains domain tests for the NBT model, integrity signing and validation rules:
@@ -86,7 +94,7 @@ gradlew.bat test
 ## Installation
 
 1. Install Minecraft Forge 47.x for 1.20.1.
-2. Put `veriborder-1.2.0-hotfix2.jar` into the `mods` folder.
+2. Put `veriborder-1.2.1.jar` into the `mods` folder.
 3. Launch the game. The creative tab **VeriBorder · Documents & Terminals** contains every document sample and every machine.
 
 ---
@@ -163,7 +171,7 @@ Each document contains a deterministic SHA-256 `integrity` value over every fiel
 | Block | Function |
 |---|---|
 | Identity Card Issuer | Issue mainland or Hong Kong IDs from a form. |
-| Passport Issuer | Issue any of the five passport layouts. |
+| Passport Issuer | Issue any of the five passport layouts, optionally with an attached visa written into the passport NBT. Layout, place, issue date, validity and attached-visa type/code can be locked. |
 | HK & Macau Permit Issuer | Issue a permit plus an optional initial endorsement; the initial endorsement code can be locked to an 8-digit value. |
 | Visa Issuing Terminal | Write visas directly into a held/inventory passport; save templates and batch-issue every saved template. |
 | Endorsement Processing Machine | Staff machine: issue, renew and revoke endorsements on a permit. |
