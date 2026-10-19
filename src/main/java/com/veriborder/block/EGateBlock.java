@@ -19,17 +19,28 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 public class EGateBlock extends DeviceBlock {
     public static final BooleanProperty OPEN = BooleanProperty.create("open");
 
+    /**
+     * The visual barrier is one block high, but the collision wall must be tall
+     * enough that a player cannot jump onto the gate top and cross the border.
+     * The open passage stays clear at full height; only the side cabinets use
+     * this additional height.
+     */
+    private static final double GATE_HEIGHT = 2.0D;
+
     /** Open collision for a north/south-facing gate: cabinets on the X edges. */
     private static final VoxelShape OPEN_NS = Shapes.or(
-            Shapes.box(0.0D, 0.0D, 0.0D, 0.125D, 1.0D, 1.0D),
-            Shapes.box(0.875D, 0.0D, 0.0D, 1.0D, 1.0D, 1.0D)
+            Shapes.box(0.0D, 0.0D, 0.0D, 0.125D, GATE_HEIGHT, 1.0D),
+            Shapes.box(0.875D, 0.0D, 0.0D, 1.0D, GATE_HEIGHT, 1.0D)
     );
 
     /** Open collision for an east/west-facing gate: cabinets on the Z edges. */
     private static final VoxelShape OPEN_EW = Shapes.or(
-            Shapes.box(0.0D, 0.0D, 0.0D, 1.0D, 1.0D, 0.125D),
-            Shapes.box(0.0D, 0.0D, 0.875D, 1.0D, 1.0D, 1.0D)
+            Shapes.box(0.0D, 0.0D, 0.0D, 1.0D, GATE_HEIGHT, 0.125D),
+            Shapes.box(0.0D, 0.0D, 0.875D, 1.0D, GATE_HEIGHT, 1.0D)
     );
+
+    /** Closed gate: a full two-block-high wall, not a jumpable one-block step. */
+    private static final VoxelShape CLOSED = Shapes.box(0.0D, 0.0D, 0.0D, 1.0D, GATE_HEIGHT, 1.0D);
 
     public EGateBlock(Properties properties, DeviceType deviceType) {
         super(properties, deviceType);
@@ -49,11 +60,11 @@ public class EGateBlock extends DeviceBlock {
 
     @Override
     public VoxelShape getCollisionShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-        return state.getValue(OPEN) ? openShape(state) : Shapes.block();
+        return state.getValue(OPEN) ? openShape(state) : CLOSED;
     }
 
     @Override
     public VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-        return state.getValue(OPEN) ? openShape(state) : Shapes.block();
+        return state.getValue(OPEN) ? openShape(state) : CLOSED;
     }
 }

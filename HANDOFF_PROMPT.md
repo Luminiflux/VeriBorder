@@ -18,14 +18,16 @@ C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder
 
 当前状态：
 - 作者：Luminiflux
-- 版本：1.2.0-hotfix
+- 版本：1.2.0-hotfix2
 - 目标：Minecraft 1.20.1 / Forge 47.x / Java 17
-- 成品：dist/veriborder-1.2.0-hotfix.jar
-- 源码包：dist/veriborder-1.2.0-hotfix-src.zip
+- 成品：dist/veriborder-1.2.0-hotfix2.jar
+- 源码包：dist/veriborder-1.2.0-hotfix2-src.zip
 - 43 个 DocumentCoreTest 测试通过
 - 21 个设备模型（18 原有 + exit_gate + self_endorsement + self_visa）、21 blockstate、254 张 block 贴图、26 条配方
 - tools/preview_models.js CHECKLIST: FAILURES: none
 - 真实客户端 1.2.0 功能验收记录见 VERIFICATION.md（自助签证机/固定 code/签注 code 锁定/UI 隔离）
+- 1.2.0-hotfix2：闸机碰撞墙提升到 2 格高，关闭时完整阻挡，打开时中央 12px
+  通道保持通行，两侧柜体碰撞也提高到 2 格，防止跳上闸机顶部越境
 - 1.2.0-hotfix：创造栏改为 BuildCreativeModeTabContentsEvent 延迟填充，修复
   `Registry Object not present: veriborder:self_visa` 崩溃
 - 不依赖任何外部交通模组；不要加入外部模组依赖

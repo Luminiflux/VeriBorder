@@ -4,6 +4,30 @@ Date: 2026-10-17
 Environment: Minecraft 1.20.1 / Forge 47.2.0 / Java 17.0.20.1 (Azul)  
 Project: `C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder`
 
+## 1.2.0-hotfix2 gate jump-over collision
+
+Problem: the E-Gate collision was only one block high (`Shapes.block()`), so a
+player could jump onto the gate top and cross the border.
+
+Fix in `EGateBlock`:
+
+- Closed gate: full **2-block-high** collision wall.
+- Open gate: side cabinet strips are also 2 blocks high; the 12 px centre passage
+  remains clear from floor to 2 blocks.
+- Outline/collision shapes share the same height.
+
+Real Forge client, four-facing test (`GateHeightSmoke`):
+
+```text
+N/E/S/W closed: height >= 2, centre blocked
+N/E/S/W open:   height >= 2, centre passable, strips rotated correctly
+20/20 PASS, failures=0
+```
+
+Unit tests: 43 tests, 0 failures.
+
+---
+
 ## 1.2.0-hotfix creative-tab crash fix
 
 Crash:
