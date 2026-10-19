@@ -399,6 +399,30 @@ public final class DocumentData {
         return result;
     }
 
+    /** The explicit display label of the visa at {@code index}, blank when absent. */
+    public String visaLabel(int index) {
+        List<VisaRecord> visas = visas();
+        return index >= 0 && index < visas.size() ? visas.get(index).label() : "";
+    }
+
+    /**
+     * Display label shared by screens: the explicit visa label when present,
+     * otherwise the country, otherwise the localized visa type. A blank or
+     * unknown record renders as an empty string.
+     */
+    public static String visaDisplayLabel(VisaRecord visa) {
+        if (visa == null) {
+            return "";
+        }
+        if (!visa.label().isBlank()) {
+            return visa.label();
+        }
+        if (!visa.country().isBlank()) {
+            return visa.country();
+        }
+        return Component.translatable(visa.type().translationKey()).getString();
+    }
+
     public List<EndorsementRecord> endorsements() {
         ListTag list = tag.getList("endorsements", Tag.TAG_COMPOUND);
         List<EndorsementRecord> result = new ArrayList<>(list.size());

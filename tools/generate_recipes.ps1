@@ -45,16 +45,8 @@ WriteRecipe 'hk_macao_permit' (Shapeless @(
     (Item 'minecraft:blue_dye'), (Item 'minecraft:gold_nugget')
 ) 'veriborder:hk_macao_permit')
 
-WriteRecipe 'document_modifier' (Shaped @('GRG', 'RAR', 'GRG') ([ordered]@{
-    G = Item 'minecraft:gold_ingot'
-    R = Item 'minecraft:redstone'
-    A = Item 'minecraft:amethyst_shard'
-}) 'veriborder:document_modifier')
-
-# Brush: cheap utility item, the only way to open terminal configuration.
-WriteRecipe 'device_brush' (Shapeless @(
-    (Item 'minecraft:feather'), (Item 'minecraft:stick'), (Item 'minecraft:gold_nugget')
-) 'veriborder:device_brush')
+# Admin tools are creative-only: document_modifier and device_brush intentionally
+# have no survival recipe. They remain available in the creative tab.
 
 $iron = [ordered]@{
     I = Item 'minecraft:iron_ingot'

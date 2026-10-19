@@ -164,6 +164,16 @@ public final class DocumentFactory {
     public static CompoundTag createVisa(String country, VisaType type, int entries,
                                          String issueDate, String expiryDate, String authority,
                                          String code) {
+        return createVisa(country, type, entries, issueDate, expiryDate, authority, code, "");
+    }
+
+    /**
+     * Creates a visa record with an explicit code and an optional display label.
+     * The label is trimmed; blank keeps the old country/type fallback on screen.
+     */
+    public static CompoundTag createVisa(String country, VisaType type, int entries,
+                                         String issueDate, String expiryDate, String authority,
+                                         String code, String label) {
         CompoundTag tag = new CompoundTag();
         tag.putString("id", "V-" + randomId());
         tag.putString("country", country);
@@ -175,6 +185,7 @@ public final class DocumentFactory {
         tag.putString("authority", authority);
         tag.putString("status", VisaRecord.ACTIVE);
         tag.putString("code", CredentialCode.isValid(code) ? code.trim() : CredentialCode.random());
+        tag.putString("label", label == null ? "" : label.trim());
         return tag;
     }
 
@@ -195,16 +206,37 @@ public final class DocumentFactory {
      */
     public static CompoundTag createAttachedVisa(DocumentData passport, String country, VisaType type,
                                                  int entries, String authority, String code) {
-        String issue = DateUtil.isValid(passport.issueDate())
-                ? passport.issueDate().trim() : DateUtil.today();
-        String expiry = passport.expiryDate() == null ? "" : passport.expiryDate().trim();
-        if (!DateUtil.isValid(expiry) || DateUtil.isPermanent(expiry)) {
-            expiry = DateUtil.plusYears(issue, 1);
+        return createAttachedVisa(passport, country, type, entries, authority, code,
+                "", "", false, 0);
+    }
+
+    /**
+     * Attached visa with the 26.1 passport-visa overrides: an explicit issue date
+     * (blank or unusable keeps the passport issue date), an optional locked
+     * validity period and a display label. When validity is locked, the expiry is
+     * derived from the visa issue date with {@link #lockedExpiry}; otherwise the
+     * passport expiry is inherited when it is a real (non-permanent) date and one
+     * year after issue is used otherwise.
+     */
+    public static CompoundTag createAttachedVisa(DocumentData passport, String country, VisaType type,
+                                                 int entries, String authority, String code,
+                                                 String label, String issueDate,
+                                                 boolean lockValidity, int validityYears) {
+        String issue = DateUtil.isValid(issueDate) ? issueDate.trim()
+                : DateUtil.isValid(passport.issueDate()) ? passport.issueDate().trim()
+                : DateUtil.today();
+        String expiry;
+        if (lockValidity) {
+            expiry = lockedExpiry(issue, validityYears);
+        } else {
+            String inherited = passport.expiryDate() == null ? "" : passport.expiryDate().trim();
+            expiry = DateUtil.isValid(inherited) && !DateUtil.isPermanent(inherited)
+                    ? inherited : DateUtil.plusYears(issue, 1);
         }
         return createVisa(country == null ? "" : country.trim(),
                 type == null ? VisaType.TOURIST : type,
                 entries, issue, expiry,
-                authority == null ? "" : authority.trim(), code);
+                authority == null ? "" : authority.trim(), code, label);
     }
 
     public static CompoundTag createEndorsement(EndorsementType type, int entries,

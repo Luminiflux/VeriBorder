@@ -8,6 +8,7 @@ import com.veriborder.client.screen.EndorsementScreen;
 import com.veriborder.client.screen.IssuerScreen;
 import com.veriborder.client.screen.LossScreen;
 import com.veriborder.client.screen.ModifierScreen;
+import com.veriborder.client.screen.OfficerScreen;
 import com.veriborder.client.screen.PrintPreviewScreen;
 import com.veriborder.client.screen.ReaderScreen;
 import com.veriborder.client.screen.RenewalScreen;
@@ -39,6 +40,13 @@ public final class ClientPacketHandler {
             // Brush-only terminal configuration, sent by DeviceService.openConfig.
             DeviceType configType = DeviceType.byId(data.getString("deviceType"));
             Minecraft.getInstance().setScreen(new DeviceConfigScreen(configType, pos, data, data.getInt("slot")));
+            return;
+        }
+        if (data.getBoolean("officer") && isOfficerConsole(device, data)) {
+            // Operator console (sessions, logs, clear, refresh). The server is
+            // authoritative for the OP check; the client never decides that.
+            // A manual terminal without officer=true still opens the reader below.
+            Minecraft.getInstance().setScreen(new OfficerScreen(pos, data));
             return;
         }
         DeviceType type = DeviceType.byId(device);
@@ -95,5 +103,14 @@ public final class ClientPacketHandler {
             case BLACKLIST -> Minecraft.getInstance().setScreen(new BlacklistScreen(data));
             case EGATE -> Minecraft.getInstance().setScreen(new EGateScreen(type, data));
         }
+    }
+
+    /** Officer payloads are only honoured on a manual verification terminal. */
+    private static boolean isOfficerConsole(String device, CompoundTag data) {
+        // DeviceService.openOfficer sends the payload under the pseudo device id
+        // "officer" (like "config") and also tags deviceType=manual_terminal.
+        return "officer".equals(device)
+                || DeviceType.MANUAL_TERMINAL.id().equals(device)
+                || DeviceType.MANUAL_TERMINAL.id().equals(data.getString("deviceType"));
     }
 }

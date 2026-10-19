@@ -14,7 +14,8 @@ public record VisaRecord(
         String expiryDate,
         String authority,
         String status,
-        String code
+        String code,
+        String label
 ) {
     public static final String ACTIVE = "ACTIVE";
     public static final String REVOKED = "REVOKED";
@@ -23,10 +24,20 @@ public record VisaRecord(
     /**
      * A record always exposes a usable eight-digit code: an explicit valid code
      * is kept, otherwise the deterministic legacy code for its id is used (or a
-     * random code when even the id is missing).
+     * random code when even the id is missing). The optional display label is
+     * trimmed; blank means the UI falls back to country/type.
      */
     public VisaRecord {
         code = normalizeCode(id, code);
+        label = label == null ? "" : label.trim();
+    }
+
+    /** Pre-26.1 record view: no display label. */
+    public VisaRecord(String id, String country, VisaType type, int entries, int usedEntries,
+                      String issueDate, String expiryDate, String authority, String status,
+                      String code) {
+        this(id, country, type, entries, usedEntries, issueDate, expiryDate, authority, status,
+                code, "");
     }
 
     public static VisaRecord fromTag(CompoundTag tag) {
@@ -40,7 +51,8 @@ public record VisaRecord(
                 tag.getString("expiryDate"),
                 tag.getString("authority"),
                 tag.contains("status") ? tag.getString("status") : ACTIVE,
-                tag.getString("code")
+                tag.getString("code"),
+                tag.getString("label")
         );
     }
 
@@ -56,7 +68,13 @@ public record VisaRecord(
         tag.putString("authority", authority);
         tag.putString("status", status);
         tag.putString("code", code);
+        tag.putString("label", label);
         return tag;
+    }
+
+    /** Whether this record carries an explicit display label. */
+    public boolean hasLabel() {
+        return !label.isBlank();
     }
 
     public int remainingEntries() {

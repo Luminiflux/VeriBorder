@@ -40,6 +40,8 @@ public class VisaIssuerScreen extends VeriScreen {
     private final String lockedIssueDate;
     private final boolean lockValidity;
     private final int lockedValidityYears;
+    private final boolean lockVisaName;
+    private final String lockedVisaName;
     private final List<CompoundTag> templates = new ArrayList<>();
     private int templateIndex;
     private VisaType type;
@@ -49,13 +51,14 @@ public class VisaIssuerScreen extends VeriScreen {
     private EditBox expiry;
     private EditBox authority;
     private EditBox code;
+    private EditBox visaName;
     private EditBox templateName;
     private BetterButton typeButton;
     private String codeError = "";
 
     public VisaIssuerScreen(DeviceType deviceType, BlockPos pos, CompoundTag payload) {
         super(Component.translatable(deviceType.translationKey()), 520,
-                deviceType == DeviceType.SELF_VISA ? 350 : 360);
+                deviceType == DeviceType.SELF_VISA ? 350 : 396);
         this.deviceType = deviceType;
         this.selfService = deviceType == DeviceType.SELF_VISA
                 || payload.getBoolean("selfService");
@@ -83,6 +86,10 @@ public class VisaIssuerScreen extends VeriScreen {
         this.lockIssueDate = payload.getBoolean("lockIssueDate") && DateUtil.isValid(issueDate);
         this.lockValidity = payload.getBoolean("lockValidity");
         this.lockedValidityYears = payload.getInt("lockedValidityYears");
+        String name = payload.getString("lockedVisaName").trim();
+        this.lockedVisaName = name;
+        // A locked blank name is meaningful: it forces the country/type fallback.
+        this.lockVisaName = payload.getBoolean("lockVisaName");
         this.type = lockVisaType ? lockedVisaType : VisaType.TOURIST;
         ListTag list = payload.getList("presets", Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
@@ -107,6 +114,10 @@ public class VisaIssuerScreen extends VeriScreen {
         return null;
     }
 
+    private String countryLockValue() {
+        return lockedPlace;
+    }
+
     @Override
     protected void build() {
         if (selfService) {
@@ -116,9 +127,10 @@ public class VisaIssuerScreen extends VeriScreen {
         String issueValue = lockIssueDate ? lockedIssueDate : DateUtil.today();
         String expiryValue = lockValidity ? autoExpiry(issueValue) : DateUtil.plusYears(issueValue, 1);
         country = addField(left + 222, top + 90, 170, "field.veriborder.visa_country",
-                lockPlace ? lockedPlace : "United States", lockPlace ? "hint.veriborder.locked" : null);
+                lockPlace ? countryLockValue() : "United States",
+                lockPlace ? "hint.veriborder.locked" : null);
         if (lockPlace) {
-            country.setValue(lockedPlace);
+            country.setValue(countryLockValue());
             country.setEditable(false);
         }
         typeButton = addRenderableWidget(new BetterButton(left + 400, top + 86, 96, 20,
@@ -167,24 +179,31 @@ public class VisaIssuerScreen extends VeriScreen {
             code.setValue(lockedVisaCode);
             code.setEditable(false);
         }
-        templateName = addField(left + 222, top + 240, 274, "field.veriborder.template_name",
+        visaName = addField(left + 222, top + 238, 274, "field.veriborder.visa_name",
+                lockVisaName ? lockedVisaName : "",
+                lockVisaName ? "hint.veriborder.locked" : "hint.veriborder.visa_name");
+        if (lockVisaName) {
+            visaName.setValue(lockedVisaName);
+            visaName.setEditable(false);
+        }
+        templateName = addField(left + 222, top + 274, 274, "field.veriborder.template_name",
                 templates.isEmpty() ? "Tourist visa" : templates.get(0).getString("name"), "hint.veriborder.preset");
-        addRenderableWidget(new BetterButton(left + 222, top + 264, 30, 19, Component.literal("◀"),
+        addRenderableWidget(new BetterButton(left + 222, top + 304, 30, 19, Component.literal("◀"),
                 button -> moveTemplate(-1), Ui.MUTED, true));
-        addRenderableWidget(new BetterButton(left + 256, top + 264, 30, 19, Component.literal("▶"),
+        addRenderableWidget(new BetterButton(left + 256, top + 304, 30, 19, Component.literal("▶"),
                 button -> moveTemplate(1), Ui.MUTED, true));
-        addRenderableWidget(new BetterButton(left + 292, top + 264, 64, 19,
+        addRenderableWidget(new BetterButton(left + 292, top + 304, 64, 19,
                 Component.translatable("button.veriborder.apply"), button -> applyTemplate(), Ui.PURPLE, true));
-        addRenderableWidget(new BetterButton(left + 360, top + 264, 60, 19,
+        addRenderableWidget(new BetterButton(left + 360, top + 304, 60, 19,
                 Component.translatable("button.veriborder.save"), button -> saveTemplate(), Ui.PURPLE, true));
-        addRenderableWidget(new BetterButton(left + 424, top + 264, 72, 19,
+        addRenderableWidget(new BetterButton(left + 424, top + 304, 72, 19,
                 Component.translatable("button.veriborder.delete"), button -> deleteTemplate(), Ui.RED, true));
 
-        addRenderableWidget(new BetterButton(left + 222, top + 302, 140, 22,
+        addRenderableWidget(new BetterButton(left + 222, top + 342, 140, 22,
                 Component.translatable("button.veriborder.issue_visa"), button -> issue(false), Ui.GREEN));
-        addRenderableWidget(new BetterButton(left + 368, top + 302, 136, 22,
+        addRenderableWidget(new BetterButton(left + 368, top + 342, 136, 22,
                 Component.translatable("button.veriborder.issue_all"), button -> issue(true), Ui.AMBER));
-        addRenderableWidget(new BetterButton(left + 444, top + 330, 52, 20,
+        addRenderableWidget(new BetterButton(left + 444, top + 370, 52, 20,
                 Component.translatable("button.veriborder.close"), button -> onClose(), Ui.MUTED, true));
     }
 
@@ -258,6 +277,11 @@ public class VisaIssuerScreen extends VeriScreen {
         } else {
             authority.setValue(lockedAuthority);
         }
+        if (!lockVisaName) {
+            visaName.setValue(values.getString("visaName"));
+        } else {
+            visaName.setValue(lockedVisaName);
+        }
         typeButton.setMessage(Component.translatable(type.translationKey()));
     }
 
@@ -277,6 +301,7 @@ public class VisaIssuerScreen extends VeriScreen {
         data.putString("expiryDate", expiry.getValue());
         data.putString("authority", authority.getValue());
         data.putString("code", lockVisaCode ? lockedVisaCode : ScreenCodes.validOrBlank(code.getValue()));
+        data.putString("visaName", lockVisaName ? lockedVisaName : visaName.getValue().trim());
         return data;
     }
 
@@ -348,6 +373,10 @@ public class VisaIssuerScreen extends VeriScreen {
                                 validityYearsText(), autoExpiry(issueValue)),
                         left + 222, top + 220, 274, Ui.AMBER);
             }
+            if (lockVisaName) {
+                Ui.clipped(graphics, Component.translatable("screen.veriborder.visa.self_name",
+                                lockedVisaName), left + 222, top + 236, 274, Ui.CYAN);
+            }
             return;
         }
         if (lockValidity) {
@@ -365,11 +394,11 @@ public class VisaIssuerScreen extends VeriScreen {
                     top + 216, 274, Ui.RED);
         }
         Ui.clipped(graphics, Component.translatable("screen.veriborder.visa.batch_hint"), left + 222,
-                top + 330, 210, Ui.DIM);
+                top + 366, 210, Ui.DIM);
         if (!templates.isEmpty()) {
             Ui.clipped(graphics, Component.translatable("screen.veriborder.templates",
                     templates.get(Math.floorMod(templateIndex, templates.size())).getString("name")),
-                    left + 222, top + 290, 274, Ui.DIM);
+                    left + 222, top + 292, 274, Ui.DIM);
         }
     }
 }

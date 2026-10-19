@@ -1,278 +1,127 @@
-# VeriBorder
+# VeriBorder / 证界边检
 
-**VeriBorder / 证界边检** is a Minecraft **1.20.1 Forge** mod by **Luminiflux** that recreates the complete real-world document chain — identity cards, passports, exit-entry permits, visas, endorsements and immigration stamps — together with the machines found in airports, land ports, hotels, government service halls and immigration halls.
+**VeriBorder** is a Minecraft **1.20.1 Forge** mod by **Luminiflux** that recreates the
+complete real-world document chain and border-control workflow: identity cards, passports,
+exit-entry permits, visas, endorsements, immigration stamps, issuing machines, verification
+terminals and automated border gates.
 
-**Current release:** `1.2.1`.
+Everything is stored in the item NBT, so every document is a real, editable object rather
+than a menu entry. Machine configuration is stored in each block entity and survives world
+saves.
 
-> **1.2.1 feature update — passport-attached visas and universal issuer locks.**
->
-> - The Passport Issuer now has an optional **visa panel**: include a visa in the passport at creation, with country, visa type, 8-digit code and entries. The visa is written into the passport NBT in the same operation.
-> - Passport layout/style, place of issue, issue date and validity years can be **locked** in the brush config. The five passport layouts are selectable and lockable.
-> - All issuer types (document, visa, endorsement, and self-service kiosks) support locked document/visa/endorsement type, place/country, issue date and validity years. Locked validity auto-calculates the expiry date; 0 means permanent.
-> - Attached-visa type and code can be locked on the Passport Issuer. Locked code is used verbatim; unlocked blank code stays auto-unique.
-> - Standalone Visa Issuing Terminal is unchanged: apply a visa to a passport later with right-click.
->
-> **1.2.0-hotfix2:** the E-Gate now has a full-height collision wall. Closed gates block two blocks of height; open gates keep the 12 px centre passage clear but raise both side cabinets to the same height. This prevents jumping onto the gate top and crossing the border.
->
-> **1.2.0-hotfix:** fixed a startup/creative-inventory crash caused by filling the creative tab from the `displayItems` lambda before every device item's `RegistryObject` was present. Creative contents now come from Forge's `BuildCreativeModeTabContentsEvent` after registries are ready, with an `isPresent()` guard. The crash was `Registry Object not present: veriborder:self_visa`.
+- Minecraft 1.20.1
+- Forge 47.x
+- Java 17
+- Version **26.1**
 
-> **1.2.0 feature update — self-service visa kiosk and machine-controlled codes.**
->
-> - New **Self-service Visa Machine** (`self_visa`): player chooses only a visa type, inserts a passport and issues. Country, issuing authority, dates, entries and code are admin-configured; no authority/template/code fields are exposed to players.
-> - **Self-service Visa Machine and Self-service Endorsement Machine can set a fixed 8-digit issued code** in the brush config. If set, every credential issued by that kiosk uses that exact code, so one gate code works. Blank falls back to auto-generation.
-> - The **HK & Macau Permit Issuer** can lock the initial endorsement code (`lockEndorsementCode` + 8-digit value) instead of auto-generating it.
-> - Self-service fixed codes are intentionally allowed to repeat; auto-generated codes remain unique. The gate still matches the exact 8-digit code and accepts a shared machine code.
-> - New block, 32-element kiosk model, textures, blockstate, item model, loot table and recipe. Now **21 machine models, 254 block textures, 26 recipes**.
-> - The self-service player UI contains only the preset type + Issue; all authority/template/code/entries/date/renew/revoke/delete controls are hidden and server-ignored.
->
-> **1.1.5 feature update — 8-digit credential codes and locked issuer fields.**
->
-> - Every visa and endorsement carries an **8-digit numeric code**; auto-generated codes are unique, while an administrator may intentionally pin a shared fixed code. Old records get a deterministic legacy code. The admin can type a custom code in the visa/endorsement/issuer screens, or leave blank for auto-generation.
-> - Passports can carry **visa-free 8-digit codes** directly in NBT (Modifier → visa tab → visa-free manager), with no physical visa page.
-> - E-Gate validation is now **code-only**: the gate stores an unlimited list of 8-digit codes and matches them against active visas, active endorsements and passport visa-free codes. Names/types/authorities no longer affect the match.
-> - Four gate modes: **All documents / Visa only (incl. visa-free) / Endorsement only / Visa or endorsement**. Legacy `any`/`passport`/`permit` values normalize automatically.
-> - Issuer/endorsement machines can **lock document name and issuing authority** via the brush config. Normal players see those fields locked and cannot override them; the server enforces the lock even against a forged packet.
-> - The **self-service endorsement machine** is isolated from staff machines: player UI offers only the preset endorsement type + Issue. Authority, templates, code, renew/revoke/delete are hidden and server-ignored; admins set its authority via brush config.
->
-> **1.1.3 hotfix:** fixed the E-Gate collision shape for all four facings (east/west now have their cabinet strips on the Z edges and a passable centre). Fixed in-game flicker by switching gates to the **cutout** render layer, removing every overlapping/coplanar element from the gate models (AABB overlap count now 0 for both gates), and moving the BER status lenses in front of the cabinet shell.
+## Documents
 
-> **1.1.2 hotfix:** the E-Gate was rebuilt as a **waist-high single-lane ticket barrier**: two 4 px cabinets straddling the controller block, a 12 px clearance, 16 px body, angled card reader, screen, orange/green base strip and ENTRY/EXIT arrow signs. The two 6×9 glass wings are drawn by the smooth BER animation.
+- **Identity cards**: mainland China and Hong Kong layouts.
+- **Passports**: PRC, Hong Kong SAR, Macao SAR, United States and Japan layouts, with
+  machine-readable zones and custom cover data.
+- **HK & Macau Exit-Entry Permit**.
+- **Visas**: tourist, business, student, work, family and other, with issuing country,
+  authority, entries, dates and a unique 8-digit credential code.
+- **Endorsements**: one-year multiple, three-month single and other, with the same code
+  system.
+- **Visa-free codes**: passports can carry 8-digit visa-free codes directly in NBT, with no
+  physical visa page.
+- **Stamps**: entry and exit records with port, country, date and officer. Both passports
+  and HK/Macau permits can be stamped.
+- Custom document names, colours, types, numbers, photos and layouts are editable with the
+  Universal Document Modifier.
 
-> **1.1.1 hotfix:** the **Exit E-Gate** checks only the document itself (valid, not lost/cancelled/suspended/expired/tampered). It no longer requires a visa or endorsement, ignores any entry binding, and does not consume visa/endorsement entries. Entry-gate visa/endorsement binding is unchanged.
+## Credential codes
 
-## What changed in 1.1.0
+- Every visa and endorsement has an 8-digit numeric code, including leading zeros.
+- Auto-generated codes are unique within a document. A machine may intentionally issue a
+  fixed shared code (for example, one code per self-service kiosk).
+- Passport-attached visas, standalone visas, endorsements and visa-free codes are all
+  matched by exact 8-digit code at the gate.
+- E-Gates support an unlimited code list and four modes: all documents, visa only,
+  endorsement only, visa or endorsement.
 
-- **Entry and exit E-Gates.** A new `exit_gate` joins the entry gate. Both are **20 px single-lane barriers**: two 4 px cabinets, a 12 px passage, 16 px waist-high body, angled card reader, screen, coloured base strip and ENTRY/EXIT arrow sign. Two 6×9 transparent glass wings are eased and partial-tick interpolated by the BER; the OPEN block state remains authoritative for collision and animation.
-- **Gate visa/endorsement binding (entry gate).** Each entry gate can be configured as *Any valid document*, *Passport + visa*, or *Permit + endorsement*, optionally requiring a specific visa type (tourist/business/student/work/family/other) or endorsement type (one-year multiple / three-month single / other). A traveller without the configured record is rejected before the gate animates, and the message names the required type. On success the matching record is consumed. The **exit gate** deliberately ignores this binding: leaving the country only requires a valid document.
-- **Device Configuration Brush.** Only a player holding the new `device_brush` can open a terminal's configuration screen. Normal right-click keeps the document/operational behaviour; all old “Config” buttons and the no-document config shortcut were removed server-side.
-- **Self-service Endorsement Machine.** A new `self_endorsement` kiosk issues, renews and revokes endorsements on a held/placed permit, with its own model, textures and recipe, distinct from the staff endorsement machine.
-- **Endorsement type consolidation.** Group Tour and Individual Tour are no longer separate selectable types; old `team`/`individual` NBT records are still readable and resolve to **Other**. The selectable set is now One-year Multiple / Three-month Single / Other.
-- **20 machine models, 25 recipes.** The two new devices and the brush have their own models, blockstates, item models, loot and recipes; `tools/preview_models.js` validates all 20 models with `FAILURES: none`.
-- Hotfix 2 remains included: explicit GUI backgrounds, responsive scaling, labelled inputs, custom document names and the reworked 18 original machines.
+## Border workflow
 
-## What changed in hotfix 2
+- **Entry E-Gate**: validates the document and code, creates a persistent border session and
+  writes an entry stamp if auto-stamping is enabled. It does **not** consume visa or
+  endorsement entries yet.
+- **Exit E-Gate**: reads the active session, checks the same document and credential, consumes
+  exactly one entry, writes the exit stamp and clears the session.
+- Re-entering while already inside is denied with a “contact an officer” message.
+- Exit without a session, with a different document, or with an invalidated credential is
+  denied.
+- Overstay is detected on exit; the traveller is allowed to leave, an overstay warning is
+  recorded, and the officer log is updated.
+- Border sessions and logs persist across server restarts and player logouts.
 
-- **Interactive GUIs actually render.** In 1.20.1 `Screen#render` does not call `renderBackground`; every VeriBorder screen now draws its own opaque panel explicitly. This fixes the “right-click does nothing” symptom on documents and machines.
-- **Readable, responsive interface.** Opaque/semi-transparent panels, a labelled input well and hint for every field, and a global UI downscale so the 520×360 / 482×310 layouts fit a 427×240 viewport (854×480 at GUI scale 2) with clickable bottom tabs. Scissor rectangles follow the pose transform.
-- **Custom document names everywhere.** A new `displayName` NBT field overrides the official template title. The Generator, all three Issuer GUIs and the Universal Modifier expose it; it appears on the item name, tooltip, document card, reader results and print preview.
-- **All 18 machine models rebuilt.** Each device now has a bespoke multi-part model and its own 12-texture set (body, trim, screen, accent, LEDs, glass, paper, warning, …) instead of a shared cube. Light industrial palettes are differentiated per machine; screens, buttons, card slots, vents and feet are modelled individually.
-- **E-Gate rebuilt.** White/light-grey pedestals, angled tops, glass insets, card reader, LED strips and an overhead light bar. The transparent glass wings slide open from the OPEN block state, so the visible animation always matches the collision shape; four-state lights, scanning beam, sounds and particles are retained.
-- **Verified in-game.** Automated client acceptance covers 27 GUI screens (panel coverage, text, labels, field/button collisions, tab clicks, long-text clipping), all 18 block-item models, right-click with a document, right-click readers/issuers, the modifier generate/edit chain, and E-Gate open/close (progress 1.00 → 0).
+## Officer workflow
 
-All documents are ordinary items whose complete state lives in **item NBT**. The official layouts are only presets: every holder field, number, date, photo layout, visa, endorsement and stamp can be edited in-game. Every reader performs strict validation of type, dates, document status, visa/endorsement validity, destination and NBT integrity.
+- OP-level 2 officers can right-click a **Manual Verification Terminal** to open the Officer
+  Console.
+- The console lists active border sessions and recent passage logs, and can clear an entry
+  session (for example after a lost document or a border exception).
+- Officer clears are logged.
+- Commands for OP level 2:
+  - `/veriborder border status <player>`
+  - `/veriborder border clear <player>`
+  - `/veriborder border log [count]`
 
-> 中文简介：本模组复刻身份证、护照、港澳通行证、签证、签注和出入境盖章体系，并提供发行、读取、核验、盖章、挂失、续期、打印预览与黑名单查询设备。全部证件数据都存在物品 NBT 中；官方版式只是默认模板，玩家可通过万能证照修改器自由修改所有字段、版式、签证、签注和出入境记录。
+## Issuing machines
 
----
+- **Identity Card Issuer**, **Passport Issuer**, **HK & Macau Permit Issuer**.
+- **Visa Issuing Terminal**: writes visas into a held/inventory passport; templates and
+  batch template application.
+- **Endorsement Processing Machine**: issue, renew and revoke endorsements.
+- **Self-service Visa Machine** and **Self-service Endorsement Machine**: the player chooses
+  only the credential type; authority, code, dates and validity are machine parameters.
+- **Passport Issuer** can optionally attach a visa at passport creation. The visa is written
+  into the passport NBT in the same operation. Standalone visa issuance still works.
+- All issuers support lockable:
+  - document layout / visa type / endorsement type;
+  - place of issue or visa country;
+  - issue date;
+  - validity years (0 = permanent), with automatic expiry calculation;
+  - visa name and 8-digit code;
+  - passport attached-visa include/entries/country/issue/validity/name.
+- Locked fields are enforced by the server; forged packets cannot override them.
 
-## Requirements
+## Verification and gates
 
-| Component | Version |
-|---|---|
-| Minecraft | 1.20.1 |
-| Forge | 47.x (built against 47.2.0) |
-| Java | 17 |
+- **Hotel Check-in Card Reader**, **Desktop Document Scanner**, **Manual Verification
+  Terminal**, **Airport Boarding Verification Gate**, **Station Real-name Verifier**.
+- **Border Self-service E-Gate** and **Border Exit E-Gate**:
+  - 20 px single-lane barrier, two cabinets, 12 px passage, 16 px waist-high body;
+  - two framed glass wings animated with smoothstep + partial-tick interpolation;
+  - status lights, scan beam, sounds and particles;
+  - full-height collision wall to prevent jumping over the gate;
+  - unlimited 8-digit code list, batch code entry, four modes;
+  - optional automatic entry/exit stamps.
 
-## Build
+## Machines and recipes
+
+- **21 machines** with 21 block models, 21 blockstates, 254 block textures and 24 recipes.
+- **Device Configuration Brush** and **Universal Document Modifier** are creative-only admin
+  tools and require OP level 2 for configuration/modification actions.
+- Self-service kiosks, gates and terminals remain craftable; servers can place them in
+  controlled border areas.
+
+## Build and test
 
 ```bat
-gradlew.bat build
-```
-
-The reobfuscated mod jar is produced at:
-
-```text
-build/libs/veriborder-1.2.1.jar
-```
-
-The project also contains domain tests for the NBT model, integrity signing and validation rules:
-
-```bat
+set JAVA_HOME=<JDK 17>
+gradlew.bat clean build
 gradlew.bat test
 ```
 
-## Installation
+Asset generation:
 
-1. Install Minecraft Forge 47.x for 1.20.1.
-2. Put `veriborder-1.2.1.jar` into the `mods` folder.
-3. Launch the game. The creative tab **VeriBorder · Documents & Terminals** contains every document sample and every machine.
-
----
-
-## Document system
-
-### Identity cards — 2 official layouts
-
-- PRC Resident Identity Card (`cn_id`)
-- Hong Kong Permanent Identity Card (`hk_id`)
-
-Fields: name, Latin name, document number, date of birth, sex, address, issuing authority, issue date, expiry date, nationality, place of issue, status.
-
-The mainland number generator creates a valid 18-digit number with the official mod-11-2 check digit. The Hong Kong number generator creates a check-digit-valid format such as `A123456(3)`. Hong Kong permanent cards use a permanent validity date.
-
-### Passports — 5 official layouts
-
-- People's Republic of China Passport
-- Hong Kong SAR Passport
-- Macao SAR Passport
-- United States Passport
-- Japan Passport
-
-Fields: holder, Latin name, passport number, nationality, date of birth, sex, place of issue, issuing authority, issue date, expiry date, status, plus unlimited visas and unlimited entry/exit stamps. A TD3-style 44-character MRZ is regenerated from the current fields every time the document is signed.
-
-### HK & Macau Exit-Entry Permit
-
-Fields: holder, permit number, dates, authority, status, plus unlimited endorsements of these types:
-
-- One-year Multiple Entry
-- Three-month Single Entry
-- Other (legacy `team` / `individual` records also resolve here)
-- Other
-
-### Visas
-
-Visas are **not separate items**. They are stored inside the target passport NBT and are limited only by NBT size:
-
-- issuing country
-- visa type (tourist / business / student / work / family visit / other)
-- number of entries (`0` = unlimited)
-- used entries
-- issue date
-- expiry date
-- issuing authority
-- status (active / revoked / expired)
-
-### Endorsements
-
-Endorsements are stored inside the HK & Macau permit NBT with type, entries, used entries, dates, authority and status. Both the staff endorsement machine and the self-service kiosk can issue, renew and revoke them. The permit issuer can attach an initial endorsement during issuance.
-
-### Immigration stamps
-
-Entry and exit stamp machines append records to a passport's NBT:
-
-- direction (entry / exit)
-- port / checkpoint
-- country / region
-- date
-- officer
-
-The stamp history terminal reads the entire history.
-
-### NBT integrity
-
-Each document contains a deterministic SHA-256 `integrity` value over every field. The modifier recalculates it after legitimate edits; changing NBT externally makes every reader and the E-Gate report a tamper failure.
-
----
-
-## Machine catalogue
-
-### Issuing devices
-
-| Block | Function |
-|---|---|
-| Identity Card Issuer | Issue mainland or Hong Kong IDs from a form. |
-| Passport Issuer | Issue any of the five passport layouts, optionally with an attached visa written into the passport NBT. Layout, place, issue date, validity and attached-visa type/code can be locked. |
-| HK & Macau Permit Issuer | Issue a permit plus an optional initial endorsement; the initial endorsement code can be locked to an 8-digit value. |
-| Visa Issuing Terminal | Write visas directly into a held/inventory passport; save templates and batch-issue every saved template. |
-| Endorsement Processing Machine | Staff machine: issue, renew and revoke endorsements on a permit. |
-| Self-service Visa Machine | Self-operated kiosk: choose a visa type, insert a passport and issue. Country/authority/code/dates are admin-set; player UI has no authority, template or code fields. |
-| Self-service Endorsement Machine | Self-operated kiosk: choose an endorsement type and issue. No authority/template/code/renew/revoke/delete controls; admin sets a fixed code via brush config. |
-
-All issuers have forms, preset save/apply/delete, validation and bilingual labels. Presets are stored in the block entity NBT, while every issued document's data is stored in the resulting item NBT. Self-service kiosks expose only the type choice; their issuing authority and fixed code are configured with the Device Configuration Brush.
-
-### Reading and verification devices
-
-| Block | Function |
-|---|---|
-| Hotel Check-in Card Reader | Accepts IDs, passports and permits; shows validity and all details. |
-| Desktop Document Scanner | Full-screen inspection of all visas, endorsements and stamps. |
-| Manual Verification Terminal | Deep border-counter inspection. |
-| Airport Boarding Verification Gate | Passport + matching valid visa; destination configurable per terminal. |
-| Station Real-name Verifier | Identity cards only. |
-| Border Self-service E-Gate | 20 px single-lane barrier: two cabinets, 12 px clearance, 16 px waist-high body, angled card reader, screen, ENTRY sign, orange base strip, two animated 6×9 glass wings, four states, sounds and particles. Validates an unlimited list of 8-digit codes against visas, endorsements and passport visa-free codes; four modes: all documents / visa only / endorsement only / visa or endorsement. |
-| Border Exit E-Gate | Exit-side variant with green base strip and EXIT signage; same animation/collision, checks only document validity and never requires or consumes a visa/endorsement. |
-
-### Stamp and service devices
-
-| Block | Function |
-|---|---|
-| Entry Stamp Machine | Right-click with a passport to append an entry stamp. Configurable port, country and officer. |
-| Exit Stamp Machine | Same for exit stamps. |
-| Stamp History Terminal | Read-only full travel history. |
-| Loss & Cancellation Terminal | Mark lost / cancelled / suspended / restore valid. Every reader honours the blacklist. |
-| Document Renewal Machine | Extend validity and refresh the issue date. |
-| Document Print Preview | High-resolution layout preview with MRZ and integrity report. |
-| Border Blacklist Terminal | Audit every carried document and its blacklist status. |
-
-### Device Configuration Brush
-
-Right-click a terminal while holding the **Device Configuration Brush** to open its configuration screen
-(port, country, officer, airport destination; for gates also the document mode and required visa/endorsement
-type). Without the brush, right-click keeps the normal document/operational behaviour. The brush is
-craftable from a feather, a stick and a gold nugget. Terminal configuration cannot be opened or saved
-without it.
-
----
-
-## Universal Document Modifier
-
-Right-click with the modifier to open the universal generator/editor. If the inventory has no documents, the generator opens directly; the **Generate** button is also available inside the editor.
-
-**Generate directly into the inventory**
-- Give the document its own **Document name** (stored as `displayName`); leave it empty to use the official template title.
-- Choose the base kind: identity card, passport or permit.
-- Choose an official template, or enable **Custom cover**.
-- Custom documents have their own cover name, short name, document type, and a 24-bit cover colour (`#RRGGBB`) with a palette shortcut.
-- Fill in the holder fields and click **Generate Document**; the resulting item is added to the player's inventory.
-- Custom covers use a tinted item model, while the GUI card, border, status and type use the chosen colour.
-
-**Edit carried documents**
-- Edit the document name independently of the official layout or custom cover.
-- Switch any official layout for the document kind, or apply/reset a custom cover.
-- Edit all profile fields, including status and sex.
-- Add, edit and delete unlimited visas.
-- Add, edit and delete unlimited endorsements.
-- Delete individual stamps or clear the complete stamp history.
-- Save the complete document; the server re-signs the NBT integrity value.
-
----
-
-## Interaction summary
-
-- **Right-click a document item** → full document viewer. Identity cards show only **Profile**; passports show **Profile / Visas / Stamps**; permits show **Profile / Endorsements / Stamps**.
-- **Right-click a machine** → its operational GUI. Readers use the held document (main hand or off hand).
-- **Right-click a machine with the Device Configuration Brush** → its configuration GUI (ports, countries, officers, destination, gate binding). Configuration cannot be opened or saved without the brush.
-- **Right-click an entry/exit stamp machine with a passport** → immediate stamp + result screen.
-- **Right-click an E-Gate with a document** → verification animation. An **entry** gate may be configured for passports (matching active visa, optionally a specific visa type), permits (matching active endorsement, optionally a specific type) or any valid document; wrong documents are rejected before the wings move. An **exit** gate only checks that the document itself is valid and never requires or consumes a visa/endorsement.
-- **Sneak is not required** for any operation.
-
-## Data layout (abridged)
-
-```text
-ItemStack.tag
-├── CustomModelData             # layout model selector
-└── VeriBorder
-    ├── schema                  # 1
-    ├── kind, style
-    ├── name, nameLatin, number, sex, birthDate
-    ├── address, authority, issueDate, expiryDate
-    ├── nationality, placeOfIssue, status
-    ├── mrz1, mrz2
-    ├── visas: [ { id, country, type, entries, usedEntries,
-    │               issueDate, expiryDate, authority, status } ]
-    ├── endorsements: [ { id, type, entries, usedEntries,
-    │                     issueDate, expiryDate, authority, status } ]
-    ├── stamps: [ { id, direction, port, country, date, officer } ]
-    ├── displayName              # optional custom name overriding the template title
-    ├── customStyle, customName, customShortName, customType, customColor
-    └── integrity               # SHA-256 over all other fields
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\generate_assets.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\generate_recipes.ps1
+node tools\preview_models.js
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\preview_models.ps1
 ```
-
-Terminal configuration (port, country, officer, airport destination, saved templates) is stored in each terminal block entity's NBT, so it survives world saves and is not global state.
-
-## Bilingual support
-
-Every item, block, tooltip, button, message, verification reason and GUI label has `en_us` and `zh_cn` translations. Minecraft's language setting selects the language.
 
 ## License
 

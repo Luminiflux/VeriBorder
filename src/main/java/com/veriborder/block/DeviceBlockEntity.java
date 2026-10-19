@@ -53,8 +53,9 @@ public class DeviceBlockEntity extends BlockEntity {
     /**
      * Persisted + synced issuer lock configuration. Locked values are enforced on
      * the server, so a client that ignores them still cannot issue a different
-     * document name, authority, layout, place, date, validity, visa type/code or
-     * endorsement type.
+     * document name, authority, layout, place, date, validity, visa type/code,
+     * endorsement type or passport-attached visa (include/entries/country/issue/
+     * validity/name).
      */
     public record Locks(boolean lockDocumentName, String lockedDocumentName,
                         boolean lockAuthority, String lockedAuthority,
@@ -64,10 +65,17 @@ public class DeviceBlockEntity extends BlockEntity {
                         boolean lockValidity, int lockedValidityYears,
                         boolean lockVisaType, String lockedVisaType,
                         boolean lockVisaCode, String lockedVisaCode,
-                        boolean lockEndorsementType, String lockedEndorsementType) {
+                        boolean lockEndorsementType, String lockedEndorsementType,
+                        boolean lockIncludeVisa, boolean lockedIncludeVisa,
+                        boolean lockVisaEntries, int lockedVisaEntries,
+                        boolean lockVisaCountry, String lockedVisaCountry,
+                        boolean lockVisaIssueDate, String lockedVisaIssueDate,
+                        boolean lockVisaValidity, int lockedVisaValidityYears,
+                        boolean lockVisaName, String lockedVisaName) {
         public static final Locks NONE = new Locks(false, "", false, "",
                 false, "", false, "", false, "", false, 0,
-                false, "", false, "", false, "");
+                false, "", false, "", false, "",
+                false, false, false, 0, false, "", false, "", false, 0, false, "");
 
         public Locks {
             lockedDocumentName = normalize(lockedDocumentName);
@@ -78,6 +86,10 @@ public class DeviceBlockEntity extends BlockEntity {
             lockedVisaType = normalize(lockedVisaType);
             lockedVisaCode = normalize(lockedVisaCode);
             lockedEndorsementType = normalize(lockedEndorsementType);
+            lockedVisaCountry = normalize(lockedVisaCountry);
+            lockedVisaIssueDate = normalize(lockedVisaIssueDate);
+            lockedVisaName = normalize(lockedVisaName);
+            lockedVisaEntries = Math.max(0, lockedVisaEntries);
         }
 
         /** Pre-1.2.1 lock view (document name and authority only). */
@@ -86,6 +98,24 @@ public class DeviceBlockEntity extends BlockEntity {
             this(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority,
                     false, "", false, "", false, "", false, 0,
                     false, "", false, "", false, "");
+        }
+
+        /** Pre-26.1 lock view: no passport-attached visa locks. */
+        public Locks(boolean lockDocumentName, String lockedDocumentName,
+                     boolean lockAuthority, String lockedAuthority,
+                     boolean lockStyle, String lockedStyle,
+                     boolean lockPlace, String lockedPlace,
+                     boolean lockIssueDate, String lockedIssueDate,
+                     boolean lockValidity, int lockedValidityYears,
+                     boolean lockVisaType, String lockedVisaType,
+                     boolean lockVisaCode, String lockedVisaCode,
+                     boolean lockEndorsementType, String lockedEndorsementType) {
+            this(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority,
+                    lockStyle, lockedStyle, lockPlace, lockedPlace,
+                    lockIssueDate, lockedIssueDate, lockValidity, lockedValidityYears,
+                    lockVisaType, lockedVisaType, lockVisaCode, lockedVisaCode,
+                    lockEndorsementType, lockedEndorsementType,
+                    false, false, false, 0, false, "", false, "", false, 0, false, "");
         }
 
         public static Locks fromTag(CompoundTag tag) {
@@ -110,7 +140,19 @@ public class DeviceBlockEntity extends BlockEntity {
                     tag.getBoolean("lockVisaCode"),
                     tag.getString("lockedVisaCode"),
                     tag.getBoolean("lockEndorsementType"),
-                    tag.getString("lockedEndorsementType")
+                    tag.getString("lockedEndorsementType"),
+                    tag.getBoolean("lockIncludeVisa"),
+                    tag.getBoolean("lockedIncludeVisa"),
+                    tag.getBoolean("lockVisaEntries"),
+                    tag.getInt("lockedVisaEntries"),
+                    tag.getBoolean("lockVisaCountry"),
+                    tag.getString("lockedVisaCountry"),
+                    tag.getBoolean("lockVisaIssueDate"),
+                    tag.getString("lockedVisaIssueDate"),
+                    tag.getBoolean("lockVisaValidity"),
+                    tag.getInt("lockedVisaValidityYears"),
+                    tag.getBoolean("lockVisaName"),
+                    tag.getString("lockedVisaName")
             );
         }
 
@@ -133,6 +175,18 @@ public class DeviceBlockEntity extends BlockEntity {
             tag.putString("lockedVisaCode", lockedVisaCode);
             tag.putBoolean("lockEndorsementType", lockEndorsementType);
             tag.putString("lockedEndorsementType", lockedEndorsementType);
+            tag.putBoolean("lockIncludeVisa", lockIncludeVisa);
+            tag.putBoolean("lockedIncludeVisa", lockedIncludeVisa);
+            tag.putBoolean("lockVisaEntries", lockVisaEntries);
+            tag.putInt("lockedVisaEntries", lockedVisaEntries);
+            tag.putBoolean("lockVisaCountry", lockVisaCountry);
+            tag.putString("lockedVisaCountry", lockedVisaCountry);
+            tag.putBoolean("lockVisaIssueDate", lockVisaIssueDate);
+            tag.putString("lockedVisaIssueDate", lockedVisaIssueDate);
+            tag.putBoolean("lockVisaValidity", lockVisaValidity);
+            tag.putInt("lockedVisaValidityYears", lockedVisaValidityYears);
+            tag.putBoolean("lockVisaName", lockVisaName);
+            tag.putString("lockedVisaName", lockedVisaName);
             return tag;
         }
 
@@ -183,11 +237,40 @@ public class DeviceBlockEntity extends BlockEntity {
     /** Locked endorsement type id, used by endorsement machines. */
     private boolean lockEndorsementType;
     private String lockedEndorsementType = "";
+    /** Passport issuer: force whether an attached visa is issued at all. */
+    private boolean lockIncludeVisa;
+    private boolean lockedIncludeVisa;
+    /** Passport issuer: locked attached-visa entries; 0 means unlimited. */
+    private boolean lockVisaEntries;
+    private int lockedVisaEntries;
+    /** Passport issuer: locked attached-visa country (lockPlace stays the legacy fallback). */
+    private boolean lockVisaCountry;
+    private String lockedVisaCountry = "";
+    /** Passport issuer: locked attached-visa issue date (YYYY-MM-DD). */
+    private boolean lockVisaIssueDate;
+    private String lockedVisaIssueDate = "";
+    /** Passport issuer: locked attached-visa validity in years; 0 means permanent. */
+    private boolean lockVisaValidity;
+    private int lockedVisaValidityYears;
+    /** Passport/visa issuer: locked attached-visa display label. */
+    private boolean lockVisaName;
+    private String lockedVisaName = "";
     /** Fixed code used by a self-service visa/endorsement kiosk; blank = auto. */
     private String issuedCode = "";
     /** Permit issuer: lock the initial endorsement code instead of auto-generating it. */
     private boolean lockEndorsementCode;
     private String lockedEndorsementCode = "";
+
+    /**
+     * Gate behaviour: write the IN/OUT immigration stamp automatically when a
+     * traveller passes (passport and HK/Macau permit only).
+     */
+    public static final int DEFAULT_OVERSTAY_DAYS = 30;
+    /** Upper bound for {@link #overstayDays()} so the day maths never overflows. */
+    public static final int MAX_OVERSTAY_DAYS = 3650;
+    private boolean autoStamp = true;
+    /** Days a traveller may stay before the exit gate reports an overstay. */
+    private int overstayDays = DEFAULT_OVERSTAY_DAYS;
 
     private GateState gateState = GateState.IDLE;
     private int stateTicks;
@@ -321,6 +404,30 @@ public class DeviceBlockEntity extends BlockEntity {
         return CredentialCode.normalizeAll(codes);
     }
 
+    /** Whether this gate stamps IN/OUT automatically for passport/permit holders. */
+    public boolean autoStamp() {
+        return autoStamp;
+    }
+
+    public void setAutoStamp(boolean value) {
+        autoStamp = value;
+        changed();
+    }
+
+    /** Days allowed between entry and exit before the exit gate warns. */
+    public int overstayDays() {
+        return overstayDays;
+    }
+
+    public void setOverstayDays(int value) {
+        overstayDays = clampOverstay(value);
+        changed();
+    }
+
+    private static int clampOverstay(int value) {
+        return Math.max(0, Math.min(MAX_OVERSTAY_DAYS, value));
+    }
+
     public String requiredVisaType() {
         return requiredVisaType;
     }
@@ -345,7 +452,7 @@ public class DeviceBlockEntity extends BlockEntity {
      */
     @Nullable
     public VisaType requiredVisa() {
-        return resolveVisaType(requiredVisaType);
+        return visaTypeOrNull(requiredVisaType);
     }
 
     /** Typed view of the dormant legacy endorsement requirement. */
@@ -438,6 +545,54 @@ public class DeviceBlockEntity extends BlockEntity {
         return lockedEndorsementType;
     }
 
+    public boolean lockIncludeVisa() {
+        return lockIncludeVisa;
+    }
+
+    public boolean lockedIncludeVisa() {
+        return lockedIncludeVisa;
+    }
+
+    public boolean lockVisaEntries() {
+        return lockVisaEntries;
+    }
+
+    public int lockedVisaEntries() {
+        return lockedVisaEntries;
+    }
+
+    public boolean lockVisaCountry() {
+        return lockVisaCountry;
+    }
+
+    public String lockedVisaCountry() {
+        return lockedVisaCountry;
+    }
+
+    public boolean lockVisaIssueDate() {
+        return lockVisaIssueDate;
+    }
+
+    public String lockedVisaIssueDate() {
+        return lockedVisaIssueDate;
+    }
+
+    public boolean lockVisaValidity() {
+        return lockVisaValidity;
+    }
+
+    public int lockedVisaValidityYears() {
+        return lockedVisaValidityYears;
+    }
+
+    public boolean lockVisaName() {
+        return lockVisaName;
+    }
+
+    public String lockedVisaName() {
+        return lockedVisaName;
+    }
+
     /**
      * Resolves the configured locked layout. Blank/unknown ids return {@code null}
      * so the caller falls back to the submitted layout; the {@link #lockStyle()}
@@ -463,7 +618,7 @@ public class DeviceBlockEntity extends BlockEntity {
      */
     @Nullable
     public VisaType lockedVisaTypeOrNull() {
-        return resolveVisaType(lockedVisaType);
+        return visaTypeOrNull(lockedVisaType);
     }
 
     /**
@@ -545,6 +700,66 @@ public class DeviceBlockEntity extends BlockEntity {
         changed();
     }
 
+    public void setLockIncludeVisa(boolean value) {
+        lockIncludeVisa = value;
+        changed();
+    }
+
+    public void setLockedIncludeVisa(boolean value) {
+        lockedIncludeVisa = value;
+        changed();
+    }
+
+    public void setLockVisaEntries(boolean value) {
+        lockVisaEntries = value;
+        changed();
+    }
+
+    public void setLockedVisaEntries(int value) {
+        lockedVisaEntries = Math.max(0, value);
+        changed();
+    }
+
+    public void setLockVisaCountry(boolean value) {
+        lockVisaCountry = value;
+        changed();
+    }
+
+    public void setLockedVisaCountry(String value) {
+        lockedVisaCountry = value == null ? "" : value.trim();
+        changed();
+    }
+
+    public void setLockVisaIssueDate(boolean value) {
+        lockVisaIssueDate = value;
+        changed();
+    }
+
+    public void setLockedVisaIssueDate(String value) {
+        lockedVisaIssueDate = value == null ? "" : value.trim();
+        changed();
+    }
+
+    public void setLockVisaValidity(boolean value) {
+        lockVisaValidity = value;
+        changed();
+    }
+
+    public void setLockedVisaValidityYears(int value) {
+        lockedVisaValidityYears = value;
+        changed();
+    }
+
+    public void setLockVisaName(boolean value) {
+        lockVisaName = value;
+        changed();
+    }
+
+    public void setLockedVisaName(String value) {
+        lockedVisaName = value == null ? "" : value.trim();
+        changed();
+    }
+
     public void setIssuedCode(String value) {
         String cleaned = value == null ? "" : value.trim();
         issuedCode = CredentialCode.isValid(cleaned) ? cleaned : "";
@@ -567,7 +782,10 @@ public class DeviceBlockEntity extends BlockEntity {
         return new Locks(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority,
                 lockStyle, lockedStyle, lockPlace, lockedPlace, lockIssueDate, lockedIssueDate,
                 lockValidity, lockedValidityYears, lockVisaType, lockedVisaType,
-                lockVisaCode, lockedVisaCode, lockEndorsementType, lockedEndorsementType);
+                lockVisaCode, lockedVisaCode, lockEndorsementType, lockedEndorsementType,
+                lockIncludeVisa, lockedIncludeVisa, lockVisaEntries, lockedVisaEntries,
+                lockVisaCountry, lockedVisaCountry, lockVisaIssueDate, lockedVisaIssueDate,
+                lockVisaValidity, lockedVisaValidityYears, lockVisaName, lockedVisaName);
     }
 
     public void setLockDocumentName(boolean value) {
@@ -611,7 +829,7 @@ public class DeviceBlockEntity extends BlockEntity {
         if (cleaned.isEmpty()) {
             return "";
         }
-        VisaType resolved = resolveVisaType(cleaned);
+        VisaType resolved = visaTypeOrNull(cleaned);
         return resolved == null ? cleaned : resolved.id();
     }
 
@@ -627,8 +845,9 @@ public class DeviceBlockEntity extends BlockEntity {
         return resolved == null ? cleaned : resolved.id();
     }
 
+    /** Resolves a visa type id/name; blank or unknown values return {@code null}. */
     @Nullable
-    private static VisaType resolveVisaType(String value) {
+    public static VisaType visaTypeOrNull(String value) {
         if (value == null || value.isBlank()) {
             return null;
         }
@@ -846,6 +1065,9 @@ public class DeviceBlockEntity extends BlockEntity {
         airportCountry = tag.getString("airportCountry");
         gateMode = normalizeGateMode(tag.getString("gateMode"));
         loadGateCodes(tag.getList("gateCodes", Tag.TAG_STRING));
+        autoStamp = !tag.contains("autoStamp") || tag.getBoolean("autoStamp");
+        overstayDays = clampOverstay(tag.contains("overstayDays")
+                ? tag.getInt("overstayDays") : DEFAULT_OVERSTAY_DAYS);
         requiredVisaType = normalizeVisaType(tag.getString("requiredVisaType"));
         requiredEndorsementType = normalizeEndorsementType(tag.getString("requiredEndorsementType"));
         applyLocks(tag);
@@ -898,6 +1120,18 @@ public class DeviceBlockEntity extends BlockEntity {
         lockedVisaCode = loaded.lockedVisaCode();
         lockEndorsementType = loaded.lockEndorsementType();
         lockedEndorsementType = loaded.lockedEndorsementType();
+        lockIncludeVisa = loaded.lockIncludeVisa();
+        lockedIncludeVisa = loaded.lockedIncludeVisa();
+        lockVisaEntries = loaded.lockVisaEntries();
+        lockedVisaEntries = loaded.lockedVisaEntries();
+        lockVisaCountry = loaded.lockVisaCountry();
+        lockedVisaCountry = loaded.lockedVisaCountry();
+        lockVisaIssueDate = loaded.lockVisaIssueDate();
+        lockedVisaIssueDate = loaded.lockedVisaIssueDate();
+        lockVisaValidity = loaded.lockVisaValidity();
+        lockedVisaValidityYears = loaded.lockedVisaValidityYears();
+        lockVisaName = loaded.lockVisaName();
+        lockedVisaName = loaded.lockedVisaName();
     }
 
     @Override
@@ -909,6 +1143,8 @@ public class DeviceBlockEntity extends BlockEntity {
         tag.putString("airportCountry", airportCountry);
         tag.putString("gateMode", gateMode);
         tag.put("gateCodes", gateCodesTag());
+        tag.putBoolean("autoStamp", autoStamp);
+        tag.putInt("overstayDays", overstayDays);
         tag.putString("requiredVisaType", requiredVisaType);
         tag.putString("requiredEndorsementType", requiredEndorsementType);
         locks().writeTo(tag);
@@ -928,6 +1164,8 @@ public class DeviceBlockEntity extends BlockEntity {
         tag.putString("airportCountry", airportCountry);
         tag.putString("gateMode", gateMode);
         tag.put("gateCodes", gateCodesTag());
+        tag.putBoolean("autoStamp", autoStamp);
+        tag.putInt("overstayDays", overstayDays);
         tag.putString("requiredVisaType", requiredVisaType);
         tag.putString("requiredEndorsementType", requiredEndorsementType);
         locks().writeTo(tag);
@@ -948,6 +1186,9 @@ public class DeviceBlockEntity extends BlockEntity {
         airportCountry = tag.getString("airportCountry");
         gateMode = normalizeGateMode(tag.getString("gateMode"));
         loadGateCodes(tag.getList("gateCodes", Tag.TAG_STRING));
+        autoStamp = !tag.contains("autoStamp") || tag.getBoolean("autoStamp");
+        overstayDays = clampOverstay(tag.contains("overstayDays")
+                ? tag.getInt("overstayDays") : DEFAULT_OVERSTAY_DAYS);
         requiredVisaType = normalizeVisaType(tag.getString("requiredVisaType"));
         requiredEndorsementType = normalizeEndorsementType(tag.getString("requiredEndorsementType"));
         applyLocks(tag);
@@ -979,6 +1220,8 @@ public class DeviceBlockEntity extends BlockEntity {
         tag.putString("airportCountry", airportCountry);
         tag.putString("gateMode", gateMode);
         tag.put("gateCodes", gateCodesTag());
+        tag.putBoolean("autoStamp", autoStamp);
+        tag.putInt("overstayDays", overstayDays);
         tag.putString("requiredVisaType", requiredVisaType);
         tag.putString("requiredEndorsementType", requiredEndorsementType);
         locks().writeTo(tag);

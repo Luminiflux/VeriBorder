@@ -1,5 +1,6 @@
 package com.veriborder.client.screen;
 
+import com.veriborder.block.DeviceBlockEntity;
 import com.veriborder.block.DeviceType;
 import com.veriborder.client.BetterButton;
 import com.veriborder.client.Ui;
@@ -23,17 +24,19 @@ import net.minecraft.network.chat.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Supplier;
 
 /**
  * Brush-only terminal configuration. Reached exclusively through
  * {@code DeviceService.openConfig} ("config" packet), which requires the
  * Device Brush in either hand.
  *
- * <p>Round 5 adds the universal issuer lock controls. The lock section is laid
- * out as a two-column grid: each item is a small on/off toggle with its locked
- * value underneath, so even six locks (passport issuer: layout, place, issue,
- * validity, attached-visa type and code) fit above the save row at GUI scale
- * 2 (480px design height = exactly 240px on a 854x480 screen).</p>
+ * <p>The lock section is laid out as a compact grid: each item is a small
+ * on/off toggle with its locked value underneath. Passport issuers now carry
+ * twelve locks (six document locks plus six attached-visa locks), so that
+ * device uses a three-column grid; every other issuer keeps two columns. All
+ * layouts stay inside the 480px design height, and {@link VeriScreen} scales
+ * the whole panel down automatically when the GUI scale leaves less room.</p>
  */
 public class DeviceConfigScreen extends VeriScreen {
     private static final String[] GATE_MODES = {
@@ -42,9 +45,12 @@ public class DeviceConfigScreen extends VeriScreen {
 
     /** Tallest design height that still fits a 854x480 viewport at GUI scale 2. */
     private static final int ISSUER_HEIGHT = 480;
-    private static final int LOCK_ITEM_PITCH = 46;
+    private static final int GATE_HEIGHT = 420;
+    private static final int EXIT_GATE_HEIGHT = 292;
+    private static final int LOCK_ITEM_PITCH = 44;
     private static final int LOCK_VALUE_OFFSET = 28;
     private static final int LOCK_COLUMN_WIDTH = 190;
+    private static final int PASSPORT_COLUMN_WIDTH = 126;
 
     private final DeviceType device;
     private final BlockPos pos;
@@ -57,6 +63,7 @@ public class DeviceConfigScreen extends VeriScreen {
     private final boolean documentIssuer;
     private final boolean visaIssuer;
     private final boolean endorsementIssuer;
+    private final boolean passportIssuer;
     private final DocumentKind documentKind;
     private final List<DocStyle> documentStyles;
     private final int firstFieldY;
@@ -77,6 +84,13 @@ public class DeviceConfigScreen extends VeriScreen {
     private EditBox lockedIssueDateField;
     private EditBox lockedValidityYearsField;
     private EditBox lockedVisaCodeField;
+    private EditBox lockedVisaEntriesField;
+    private EditBox lockedVisaCountryField;
+    private EditBox lockedVisaIssueDateField;
+    private EditBox lockedVisaValidityYearsField;
+    private EditBox lockedVisaNameField;
+    private EditBox overstayDaysField;
+    private BetterButton autoStampButton;
 
     private String gateMode = "all";
     private String codeError = "";
@@ -90,15 +104,26 @@ public class DeviceConfigScreen extends VeriScreen {
     private boolean lockVisaType;
     private boolean lockVisaCode;
     private boolean lockEndorsementType;
+    private boolean lockIncludeVisa;
+    private boolean includeVisaLocked;
+    private boolean lockVisaEntries;
+    private boolean lockVisaCountry;
+    private boolean lockVisaIssueDate;
+    private boolean lockVisaValidity;
+    private boolean lockVisaName;
+    private boolean autoStamp;
     private DocStyle lockedStyle;
     private VisaType lockedVisaType = VisaType.TOURIST;
     private EndorsementType lockedEndorsementType = EndorsementType.ONE_YEAR_MULTI;
     private int lockedValidityYears;
+    private int lockedVisaEntries = 1;
+    private int lockedVisaValidityYears = 1;
+    private int overstayDays = DeviceBlockEntity.DEFAULT_OVERSTAY_DAYS;
 
     public DeviceConfigScreen(DeviceType device, BlockPos pos, CompoundTag payload, int slot) {
         super(Component.translatable("screen.veriborder.config"), 440,
                 device.isIssuer() ? ISSUER_HEIGHT
-                        : device.isGate() && device != DeviceType.EXIT_GATE ? 378 : 268);
+                        : device.isGate() ? (device != DeviceType.EXIT_GATE ? GATE_HEIGHT : EXIT_GATE_HEIGHT) : 268);
         this.device = device;
         this.pos = pos;
         this.slot = slot;
@@ -109,6 +134,7 @@ public class DeviceConfigScreen extends VeriScreen {
         this.issuer = device.isIssuer();
         this.selfKiosk = device == DeviceType.SELF_VISA || device == DeviceType.SELF_ENDORSEMENT;
         this.permitIssuer = device == DeviceType.PERMIT_ISSUER;
+        this.passportIssuer = device == DeviceType.PASSPORT_ISSUER;
         this.documentKind = switch (device) {
             case ID_ISSUER -> DocumentKind.ID_CARD;
             case PASSPORT_ISSUER -> DocumentKind.PASSPORT;
@@ -121,6 +147,9 @@ public class DeviceConfigScreen extends VeriScreen {
                 || device == DeviceType.SELF_ENDORSEMENT;
         this.documentStyles = documentIssuer ? DocStyle.forKind(documentKind) : List.<DocStyle>of();
         this.gateMode = normalizeMode(payload.getString("gateMode"));
+        this.autoStamp = !payload.contains("autoStamp") || payload.getBoolean("autoStamp");
+        this.overstayDays = payload.contains("overstayDays")
+                ? clampOverstay(payload.getInt("overstayDays")) : DeviceBlockEntity.DEFAULT_OVERSTAY_DAYS;
         this.lockDocumentName = payload.getBoolean("lockDocumentName");
         this.lockAuthority = payload.getBoolean("lockAuthority");
         this.lockEndorsementCode = payload.getBoolean("lockEndorsementCode");
@@ -148,14 +177,35 @@ public class DeviceConfigScreen extends VeriScreen {
         this.lockEndorsementType = payload.getBoolean("lockEndorsementType")
                 && resolvedEndorsementType != null;
 
-        this.firstFieldY = bindingGate ? 204 : 76;
+        // 26.1 attached-visa locks (passport issuer) plus the visa-label lock.
+        this.lockIncludeVisa = payload.getBoolean("lockIncludeVisa");
+        this.includeVisaLocked = payload.getBoolean("lockedIncludeVisa");
+        this.lockVisaEntries = payload.getBoolean("lockVisaEntries");
+        this.lockedVisaEntries = Math.max(0, payload.contains("lockedVisaEntries")
+                ? payload.getInt("lockedVisaEntries") : 1);
+        String visaCountry = payload.getString("lockedVisaCountry").trim();
+        this.lockVisaCountry = payload.getBoolean("lockVisaCountry") && !visaCountry.isBlank();
+        String visaIssue = payload.getString("lockedVisaIssueDate").trim();
+        this.lockVisaIssueDate = payload.getBoolean("lockVisaIssueDate") && DateUtil.isValid(visaIssue);
+        this.lockVisaValidity = payload.getBoolean("lockVisaValidity");
+        this.lockedVisaValidityYears = payload.contains("lockedVisaValidityYears")
+                ? payload.getInt("lockedVisaValidityYears") : 1;
+        this.lockVisaName = payload.getBoolean("lockVisaName");
+
+        this.firstFieldY = bindingGate ? 250 : 76;
         if (bindingGate) {
             this.lockGridStartY = 0;
-            this.saveY = 350;
+            this.saveY = 392;
         } else if (issuer) {
-            this.lockGridStartY = selfKiosk ? 308 : 292;
-            int rows = (lockItemCount() + 1) / 2;
-            this.saveY = lockGridStartY + (rows - 1) * LOCK_ITEM_PITCH + 42 + 14;
+            // Passport issuers need four rows of three columns; the extra row is
+            // gained by starting the grid right below the authority value field.
+            this.lockGridStartY = passportIssuer ? 276 : selfKiosk ? 308 : 292;
+            int columns = lockColumns();
+            int rows = (lockItemCount() + columns - 1) / columns;
+            this.saveY = lockGridStartY + (rows - 1) * LOCK_ITEM_PITCH + 48;
+        } else if (device.isGate()) {
+            this.lockGridStartY = 0;
+            this.saveY = 264;
         } else {
             this.lockGridStartY = 0;
             this.saveY = firstFieldY + 156;
@@ -171,9 +221,10 @@ public class DeviceConfigScreen extends VeriScreen {
                 button.setMessage(gateModeLabel());
             }, accent, true));
             gateCode = addField(x, top + 104, 300, "field.veriborder.gate_code", "",
-                    "hint.veriborder.code_8");
-            gateCode.setMaxLength(8);
-            gateCode.setFilter(ScreenCodes::digitsUpTo8);
+                    "hint.veriborder.code_batch");
+            // The batch field accepts commas/spaces/semicolons, not only digits.
+            gateCode.setMaxLength(512);
+            gateCode.setFilter(DeviceConfigScreen::codeBatchInput);
             addRenderableWidget(new BetterButton(x + 308, top + 100, 84, 18,
                     Component.translatable("button.veriborder.add"), button -> addGateCode(), Ui.GREEN, true));
             addRenderableWidget(new BetterButton(x, top + 148, 120, 18,
@@ -183,6 +234,21 @@ public class DeviceConfigScreen extends VeriScreen {
                         gateCodes.clear();
                         codeError = "";
                     }, Ui.RED, true));
+        }
+        if (device.isGate()) {
+            int behaviorY = bindingGate ? 210 : 224;
+            int overstayY = bindingGate ? 222 : 236;
+            autoStampButton = addRenderableWidget(new BetterButton(x, top + behaviorY, 190, 18,
+                    autoStampLabel(), button -> {
+                        autoStamp = !autoStamp;
+                        button.setMessage(autoStampLabel());
+                    }, accent, true));
+            overstayDaysField = addField(x + 202, top + overstayY, 190,
+                    "field.veriborder.overstay_days", String.valueOf(overstayDays),
+                    "hint.veriborder.days");
+            overstayDaysField.setMaxLength(4);
+            overstayDaysField.setFilter(value -> value.length() <= 4
+                    && value.chars().allMatch(character -> character >= '0' && character <= '9'));
         }
         port = addField(x, top + firstFieldY, 392, "field.veriborder.port", payload.getString("port"));
         int fieldStep = issuer ? 32 : 36;
@@ -203,7 +269,8 @@ public class DeviceConfigScreen extends VeriScreen {
 
     /**
      * Existing name/authority locks stay at the top of the issuer section; the
-     * round-5 locks follow in a compact two-column grid.
+     * remaining locks follow in a compact grid (three columns for a passport
+     * issuer, two columns otherwise).
      */
     private void buildIssuerLocks(int x) {
         addRenderableWidget(new BetterButton(x, top + 200, 190, 18, lockNameLabel(), button -> {
@@ -227,171 +294,22 @@ public class DeviceConfigScreen extends VeriScreen {
 
         int index = 0;
         if (documentIssuer) {
-            int ix = lockColumnX(index);
-            int iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockStyleLabel(), button -> {
-                lockStyle = !lockStyle;
-                button.setMessage(lockStyleLabel());
-            }, Ui.AMBER, true));
-            addRenderableWidget(new BetterButton(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH, 16,
-                    Component.translatable(lockedStyle.shortNameKey()), button -> {
-                        lockedStyle = DocStyle.nextForKind(documentKind, lockedStyle);
-                        button.setMessage(Component.translatable(lockedStyle.shortNameKey()));
-                    }, accent, true));
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockPlaceLabel(), button -> {
-                lockPlace = !lockPlace;
-                button.setMessage(lockPlaceLabel());
-            }, Ui.AMBER, true));
-            lockedPlaceField = addField(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH,
-                    "field.veriborder.locked_place", payload.getString("lockedPlace"),
-                    "hint.veriborder.when_locked");
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockIssueLabel(), button -> {
-                lockIssueDate = !lockIssueDate;
-                button.setMessage(lockIssueLabel());
-            }, Ui.AMBER, true));
-            lockedIssueDateField = addField(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH,
-                    "field.veriborder.locked_issue", defaultIssueDate(payload.getString("lockedIssueDate")),
-                    "hint.veriborder.date");
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockValidityLabel(), button -> {
-                lockValidity = !lockValidity;
-                button.setMessage(lockValidityLabel());
-            }, Ui.AMBER, true));
-            lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
-
-            if (device == DeviceType.PASSPORT_ISSUER) {
-                ix = lockColumnX(index);
-                iy = lockRowY(index);
-                index++;
-                addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockVisaTypeLabel(), button -> {
-                    lockVisaType = !lockVisaType;
-                    button.setMessage(lockVisaTypeLabel());
-                }, Ui.AMBER, true));
-                addRenderableWidget(new BetterButton(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH, 16,
-                        Component.translatable(lockedVisaType.translationKey()), button -> {
-                            lockedVisaType = lockedVisaType.next();
-                            button.setMessage(Component.translatable(lockedVisaType.translationKey()));
-                        }, Ui.PURPLE, true));
-
-                ix = lockColumnX(index);
-                iy = lockRowY(index);
-                index++;
-                addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockVisaCodeLabel(), button -> {
-                    lockVisaCode = !lockVisaCode;
-                    button.setMessage(lockVisaCodeLabel());
-                }, Ui.AMBER, true));
-                lockedVisaCodeField = addLockedVisaCodeField(ix, iy + LOCK_VALUE_OFFSET);
+            index = addDocumentLocks(index);
+            if (passportIssuer) {
+                index = addPassportVisaLocks(index);
             }
         } else if (visaIssuer) {
-            int ix = lockColumnX(index);
-            int iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockVisaTypeLabel(), button -> {
-                lockVisaType = !lockVisaType;
-                button.setMessage(lockVisaTypeLabel());
-            }, Ui.AMBER, true));
-            addRenderableWidget(new BetterButton(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH, 16,
-                    Component.translatable(lockedVisaType.translationKey()), button -> {
-                        lockedVisaType = lockedVisaType.next();
-                        button.setMessage(Component.translatable(lockedVisaType.translationKey()));
-                    }, Ui.PURPLE, true));
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockVisaCodeLabel(), button -> {
-                lockVisaCode = !lockVisaCode;
-                button.setMessage(lockVisaCodeLabel());
-            }, Ui.AMBER, true));
-            lockedVisaCodeField = addLockedVisaCodeField(ix, iy + LOCK_VALUE_OFFSET);
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockPlaceLabel(), button -> {
-                lockPlace = !lockPlace;
-                button.setMessage(lockPlaceLabel());
-            }, Ui.AMBER, true));
-            lockedPlaceField = addField(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH,
-                    "field.veriborder.locked_place", payload.getString("lockedPlace"),
-                    "hint.veriborder.when_locked");
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockIssueLabel(), button -> {
-                lockIssueDate = !lockIssueDate;
-                button.setMessage(lockIssueLabel());
-            }, Ui.AMBER, true));
-            lockedIssueDateField = addField(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH,
-                    "field.veriborder.locked_issue", defaultIssueDate(payload.getString("lockedIssueDate")),
-                    "hint.veriborder.date");
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockValidityLabel(), button -> {
-                lockValidity = !lockValidity;
-                button.setMessage(lockValidityLabel());
-            }, Ui.AMBER, true));
-            lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+            index = addVisaIssuerLocks(index);
         } else if (endorsementIssuer) {
-            int ix = lockColumnX(index);
-            int iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockEndorsementTypeLabel(), button -> {
-                lockEndorsementType = !lockEndorsementType;
-                button.setMessage(lockEndorsementTypeLabel());
-            }, Ui.AMBER, true));
-            addRenderableWidget(new BetterButton(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH, 16,
-                    Component.translatable(lockedEndorsementType.translationKey()), button -> {
-                        lockedEndorsementType = lockedEndorsementType.next();
-                        button.setMessage(Component.translatable(lockedEndorsementType.translationKey()));
-                    }, Ui.PURPLE, true));
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockIssueLabel(), button -> {
-                lockIssueDate = !lockIssueDate;
-                button.setMessage(lockIssueLabel());
-            }, Ui.AMBER, true));
-            lockedIssueDateField = addField(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH,
-                    "field.veriborder.locked_issue", defaultIssueDate(payload.getString("lockedIssueDate")),
-                    "hint.veriborder.date");
-
-            ix = lockColumnX(index);
-            iy = lockRowY(index);
-            index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16, lockValidityLabel(), button -> {
-                lockValidity = !lockValidity;
-                button.setMessage(lockValidityLabel());
-            }, Ui.AMBER, true));
-            lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+            index = addEndorsementIssuerLocks(index);
         }
 
         if (permitIssuer) {
             int ix = lockColumnX(index);
             int iy = lockRowY(index);
             index++;
-            addRenderableWidget(new BetterButton(ix, iy, LOCK_COLUMN_WIDTH, 16,
-                    lockEndorsementCodeLabel(), button -> {
-                        lockEndorsementCode = !lockEndorsementCode;
-                        button.setMessage(lockEndorsementCodeLabel());
-                    }, Ui.AMBER, true));
-            lockedEndorsementCodeField = addField(ix, iy + LOCK_VALUE_OFFSET, LOCK_COLUMN_WIDTH,
+            addLockToggle(ix, iy, this::lockEndorsementCodeLabel, () -> lockEndorsementCode = !lockEndorsementCode);
+            lockedEndorsementCodeField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
                     "field.veriborder.locked_endorsement_code",
                     payload.getString("lockedEndorsementCode"), "hint.veriborder.code_8");
             lockedEndorsementCodeField.setMaxLength(8);
@@ -399,8 +317,193 @@ public class DeviceConfigScreen extends VeriScreen {
         }
     }
 
+    private int addDocumentLocks(int index) {
+        int ix = lockColumnX(index);
+        int iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockStyleLabel, () -> lockStyle = !lockStyle);
+        addValueButton(ix, iy + LOCK_VALUE_OFFSET, () -> Component.translatable(lockedStyle.shortNameKey()),
+                () -> lockedStyle = DocStyle.nextForKind(documentKind, lockedStyle), accent);
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockPlaceLabel, () -> lockPlace = !lockPlace);
+        lockedPlaceField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_place", payload.getString("lockedPlace"),
+                "hint.veriborder.when_locked");
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockIssueLabel, () -> lockIssueDate = !lockIssueDate);
+        lockedIssueDateField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_issue", defaultIssueDate(payload.getString("lockedIssueDate")),
+                "hint.veriborder.date");
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockValidityLabel, () -> lockValidity = !lockValidity);
+        lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+
+        if (passportIssuer) {
+            ix = lockColumnX(index);
+            iy = lockRowY(index);
+            index++;
+            addLockToggle(ix, iy, this::lockVisaTypeLabel, () -> lockVisaType = !lockVisaType);
+            addValueButton(ix, iy + LOCK_VALUE_OFFSET, () -> Component.translatable(lockedVisaType.translationKey()),
+                    () -> lockedVisaType = lockedVisaType.next(), Ui.PURPLE);
+
+            ix = lockColumnX(index);
+            iy = lockRowY(index);
+            index++;
+            addLockToggle(ix, iy, this::lockVisaCodeLabel, () -> lockVisaCode = !lockVisaCode);
+            lockedVisaCodeField = addLockedVisaCodeField(ix, iy + LOCK_VALUE_OFFSET);
+        }
+        return index;
+    }
+
+    /** 26.1 passport-attached visa locks: include, entries, country, issue, validity, name. */
+    private int addPassportVisaLocks(int index) {
+        int ix = lockColumnX(index);
+        int iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockIncludeVisaLabel, () -> lockIncludeVisa = !lockIncludeVisa);
+        addValueButton(ix, iy + LOCK_VALUE_OFFSET, this::includeVisaValueLabel,
+                () -> includeVisaLocked = !includeVisaLocked, accent);
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockVisaEntriesLabel, () -> lockVisaEntries = !lockVisaEntries);
+        lockedVisaEntriesField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_visa_entries", String.valueOf(lockedVisaEntries),
+                "hint.veriborder.unlimited");
+        lockedVisaEntriesField.setMaxLength(3);
+        lockedVisaEntriesField.setFilter(value -> value.length() <= 3
+                && value.chars().allMatch(character -> character >= '0' && character <= '9'));
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockVisaCountryLabel, () -> lockVisaCountry = !lockVisaCountry);
+        lockedVisaCountryField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_visa_country", payload.getString("lockedVisaCountry"),
+                "hint.veriborder.when_locked");
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockVisaIssueLabel, () -> lockVisaIssueDate = !lockVisaIssueDate);
+        lockedVisaIssueDateField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_visa_issue",
+                defaultIssueDate(payload.getString("lockedVisaIssueDate")), "hint.veriborder.date");
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockVisaValidityLabel, () -> lockVisaValidity = !lockVisaValidity);
+        lockedVisaValidityYearsField = addVisaValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockVisaNameLabel, () -> lockVisaName = !lockVisaName);
+        lockedVisaNameField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_visa_name", payload.getString("lockedVisaName"),
+                "hint.veriborder.visa_name");
+        return index;
+    }
+
+    private int addVisaIssuerLocks(int index) {
+        int ix = lockColumnX(index);
+        int iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockVisaTypeLabel, () -> lockVisaType = !lockVisaType);
+        addValueButton(ix, iy + LOCK_VALUE_OFFSET, () -> Component.translatable(lockedVisaType.translationKey()),
+                () -> lockedVisaType = lockedVisaType.next(), Ui.PURPLE);
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockVisaCodeLabel, () -> lockVisaCode = !lockVisaCode);
+        lockedVisaCodeField = addLockedVisaCodeField(ix, iy + LOCK_VALUE_OFFSET);
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockPlaceLabel, () -> lockPlace = !lockPlace);
+        lockedPlaceField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_place", payload.getString("lockedPlace"),
+                "hint.veriborder.when_locked");
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockIssueLabel, () -> lockIssueDate = !lockIssueDate);
+        lockedIssueDateField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_issue", defaultIssueDate(payload.getString("lockedIssueDate")),
+                "hint.veriborder.date");
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockValidityLabel, () -> lockValidity = !lockValidity);
+        lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockVisaNameLabel, () -> lockVisaName = !lockVisaName);
+        lockedVisaNameField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_visa_name", payload.getString("lockedVisaName"),
+                "hint.veriborder.visa_name");
+        return index;
+    }
+
+    private int addEndorsementIssuerLocks(int index) {
+        int ix = lockColumnX(index);
+        int iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockEndorsementTypeLabel,
+                () -> lockEndorsementType = !lockEndorsementType);
+        addValueButton(ix, iy + LOCK_VALUE_OFFSET,
+                () -> Component.translatable(lockedEndorsementType.translationKey()),
+                () -> lockedEndorsementType = lockedEndorsementType.next(), Ui.PURPLE);
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockIssueLabel, () -> lockIssueDate = !lockIssueDate);
+        lockedIssueDateField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
+                "field.veriborder.locked_issue", defaultIssueDate(payload.getString("lockedIssueDate")),
+                "hint.veriborder.date");
+
+        ix = lockColumnX(index);
+        iy = lockRowY(index);
+        index++;
+        addLockToggle(ix, iy, this::lockValidityLabel, () -> lockValidity = !lockValidity);
+        lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+        return index;
+    }
+
+    private BetterButton addLockToggle(int x, int y, Supplier<Component> label, Runnable toggle) {
+        return addRenderableWidget(new BetterButton(x, y, lockColumnWidth(), 16, label.get(), button -> {
+            toggle.run();
+            button.setMessage(label.get());
+        }, Ui.AMBER, true));
+    }
+
+    private BetterButton addValueButton(int x, int y, Supplier<Component> label, Runnable toggle, int color) {
+        return addRenderableWidget(new BetterButton(x, y, lockColumnWidth(), 16, label.get(), button -> {
+            toggle.run();
+            button.setMessage(label.get());
+        }, color, true));
+    }
+
     private EditBox addValidityYearsField(int x, int y) {
-        EditBox field = addField(x, y, LOCK_COLUMN_WIDTH, "field.veriborder.locked_validity",
+        EditBox field = addField(x, y, lockColumnWidth(), "field.veriborder.locked_validity",
                 String.valueOf(lockedValidityYears), "hint.veriborder.zero_permanent");
         field.setMaxLength(3);
         field.setFilter(value -> value.isEmpty()
@@ -408,28 +511,49 @@ public class DeviceConfigScreen extends VeriScreen {
         return field;
     }
 
+    private EditBox addVisaValidityYearsField(int x, int y) {
+        EditBox field = addField(x, y, lockColumnWidth(), "field.veriborder.locked_visa_validity",
+                String.valueOf(lockedVisaValidityYears), "hint.veriborder.zero_permanent");
+        field.setMaxLength(3);
+        field.setFilter(value -> value.isEmpty()
+                || (value.length() <= 3 && value.chars().allMatch(c -> c >= '0' && c <= '9')));
+        return field;
+    }
+
     private EditBox addLockedVisaCodeField(int x, int y) {
-        EditBox field = addField(x, y, LOCK_COLUMN_WIDTH, "field.veriborder.locked_visa_code",
+        EditBox field = addField(x, y, lockColumnWidth(), "field.veriborder.locked_visa_code",
                 payload.getString("lockedVisaCode"), "hint.veriborder.code_8");
         field.setMaxLength(8);
         field.setFilter(ScreenCodes::digitsUpTo8);
         return field;
     }
 
+    private int lockColumns() {
+        return passportIssuer ? 3 : 2;
+    }
+
+    private int lockColumnWidth() {
+        return passportIssuer ? PASSPORT_COLUMN_WIDTH : LOCK_COLUMN_WIDTH;
+    }
+
     private int lockColumnX(int index) {
-        return left + 24 + (index % 2) * 202;
+        int columns = lockColumns();
+        int width = lockColumnWidth();
+        int gap = columns == 3 ? 7 : 12;
+        return left + 24 + (index % columns) * (width + gap);
     }
 
     private int lockRowY(int index) {
-        return top + lockGridStartY + (index / 2) * LOCK_ITEM_PITCH;
+        return top + lockGridStartY + (index / lockColumns()) * LOCK_ITEM_PITCH;
     }
 
     private int lockItemCount() {
         if (documentIssuer) {
-            return 4 + (device == DeviceType.PASSPORT_ISSUER ? 2 : 0) + (permitIssuer ? 1 : 0);
+            return 4 + (passportIssuer ? 2 : 0) + (permitIssuer ? 1 : 0)
+                    + (passportIssuer ? 6 : 0);
         }
         if (visaIssuer) {
-            return 5;
+            return 6;
         }
         if (endorsementIssuer) {
             return 3;
@@ -481,19 +605,68 @@ public class DeviceConfigScreen extends VeriScreen {
         return EndorsementType.byIdOrNull(id);
     }
 
+    /** Batch gate-code field: digits plus the three accepted separators. */
+    private static boolean codeBatchInput(String value) {
+        if (value == null || value.length() > 512) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            char character = value.charAt(i);
+            if ((character < '0' || character > '9') && character != ','
+                    && character != ';' && character != ' ') {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Parses the add field as whitespace/comma/semicolon-separated codes. Every
+     * valid code is added (deduplicated); invalid tokens are rejected as a
+     * group with the usual "8 digits" error and the field is only cleared when
+     * at least one code was accepted.
+     */
     private void addGateCode() {
-        String value = gateCode == null ? "" : gateCode.getValue().trim();
-        if (!ScreenCodes.isValid(value)) {
+        String raw = gateCode == null ? "" : gateCode.getValue().trim();
+        if (raw.isEmpty()) {
             codeError = "message.veriborder.code.invalid";
             return;
         }
-        if (gateCodes.contains(value)) {
-            codeError = "message.veriborder.code.duplicate";
-            return;
+        String[] tokens = raw.split("[,;\\s]+");
+        int added = 0;
+        boolean anyToken = false;
+        boolean invalid = false;
+        boolean duplicate = false;
+        for (String token : tokens) {
+            if (token.isBlank()) {
+                continue;
+            }
+            anyToken = true;
+            String value = token.trim();
+            if (!ScreenCodes.isValid(value)) {
+                invalid = true;
+                continue;
+            }
+            if (gateCodes.contains(value)) {
+                duplicate = true;
+                continue;
+            }
+            gateCodes.add(value);
+            added++;
         }
-        gateCodes.add(value);
-        gateCode.setValue("");
-        codeError = "";
+        if (!anyToken) {
+            invalid = true;
+        }
+        if (added > 0) {
+            gateCode.setValue("");
+        }
+        if (invalid) {
+            codeError = "message.veriborder.code.invalid";
+        } else if (added == 0 && duplicate) {
+            codeError = "message.veriborder.code.duplicate";
+        } else {
+            codeError = "";
+        }
     }
 
     private void removeLastCode() {
@@ -523,6 +696,11 @@ public class DeviceConfigScreen extends VeriScreen {
 
     private Component gateModeLabel() {
         return Component.translatable("screen.veriborder.config.gate_mode." + gateMode);
+    }
+
+    private Component autoStampLabel() {
+        return Component.translatable("screen.veriborder.config.auto_stamp."
+                + (autoStamp ? "on" : "off"));
     }
 
     private Component lockNameLabel() {
@@ -575,6 +753,41 @@ public class DeviceConfigScreen extends VeriScreen {
                 + (lockEndorsementType ? "on" : "off"));
     }
 
+    private Component lockIncludeVisaLabel() {
+        return Component.translatable("screen.veriborder.config.lock_include_visa."
+                + (lockIncludeVisa ? "on" : "off"));
+    }
+
+    private Component includeVisaValueLabel() {
+        return Component.translatable("screen.veriborder.config.include_visa_value."
+                + (includeVisaLocked ? "on" : "off"));
+    }
+
+    private Component lockVisaEntriesLabel() {
+        return Component.translatable("screen.veriborder.config.lock_visa_entries."
+                + (lockVisaEntries ? "on" : "off"));
+    }
+
+    private Component lockVisaCountryLabel() {
+        return Component.translatable("screen.veriborder.config.lock_visa_country."
+                + (lockVisaCountry ? "on" : "off"));
+    }
+
+    private Component lockVisaIssueLabel() {
+        return Component.translatable("screen.veriborder.config.lock_visa_issue."
+                + (lockVisaIssueDate ? "on" : "off"));
+    }
+
+    private Component lockVisaValidityLabel() {
+        return Component.translatable("screen.veriborder.config.lock_visa_validity."
+                + (lockVisaValidity ? "on" : "off"));
+    }
+
+    private Component lockVisaNameLabel() {
+        return Component.translatable("screen.veriborder.config.lock_visa_name."
+                + (lockVisaName ? "on" : "off"));
+    }
+
     private void save() {
         CompoundTag data = new CompoundTag();
         data.putString("port", port.getValue());
@@ -595,6 +808,9 @@ public class DeviceConfigScreen extends VeriScreen {
                 data.putString("requiredVisaType", "");
                 data.putString("requiredEndorsementType", "");
             }
+            // 26.1 gate behaviour. Sent by every gate, including the exit gate.
+            data.putBoolean("autoStamp", autoStamp);
+            data.putInt("overstayDays", overstayDays());
         }
         if (issuer) {
             data.putBoolean("lockDocumentName", lockDocumentName);
@@ -620,7 +836,7 @@ public class DeviceConfigScreen extends VeriScreen {
                     lockedIssueDateField == null ? "" : lockedIssueDateField.getValue().trim());
             data.putBoolean("lockValidity", lockValidity);
             data.putInt("lockedValidityYears", validityYears());
-            if (visaIssuer || device == DeviceType.PASSPORT_ISSUER) {
+            if (visaIssuer || passportIssuer) {
                 data.putBoolean("lockVisaType", lockVisaType);
                 data.putString("lockedVisaType", lockedVisaType.id());
                 data.putBoolean("lockVisaCode", lockVisaCode);
@@ -637,6 +853,29 @@ public class DeviceConfigScreen extends VeriScreen {
                         lockedEndorsementCodeField == null ? ""
                                 : ScreenCodes.validOrBlank(lockedEndorsementCodeField.getValue()));
             }
+            if (passportIssuer) {
+                // 26.1 attached-visa locks. Keys follow the DeviceBlockEntity
+                // contract exactly (lockedVisaValidityYears for lockVisaValidity).
+                data.putBoolean("lockIncludeVisa", lockIncludeVisa);
+                data.putBoolean("lockedIncludeVisa", includeVisaLocked);
+                data.putBoolean("lockVisaEntries", lockVisaEntries);
+                data.putInt("lockedVisaEntries", lockedVisaEntries());
+                data.putBoolean("lockVisaCountry", lockVisaCountry);
+                data.putString("lockedVisaCountry", lockedVisaCountryField == null ? ""
+                        : lockedVisaCountryField.getValue().trim());
+                data.putBoolean("lockVisaIssueDate", lockVisaIssueDate);
+                data.putString("lockedVisaIssueDate", lockedVisaIssueDateField == null ? ""
+                        : lockedVisaIssueDateField.getValue().trim());
+                data.putBoolean("lockVisaValidity", lockVisaValidity);
+                data.putInt("lockedVisaValidityYears", visaValidityYears());
+                data.putBoolean("lockVisaName", lockVisaName);
+                data.putString("lockedVisaName", lockedVisaNameField == null ? ""
+                        : lockedVisaNameField.getValue().trim());
+            } else if (visaIssuer) {
+                data.putBoolean("lockVisaName", lockVisaName);
+                data.putString("lockedVisaName", lockedVisaNameField == null ? ""
+                        : lockedVisaNameField.getValue().trim());
+            }
         }
         ModNetwork.CHANNEL.sendToServer(new DeviceActionPacket(pos, "save_config", data, slot));
         onClose();
@@ -651,6 +890,43 @@ public class DeviceConfigScreen extends VeriScreen {
         } catch (NumberFormatException ignored) {
             return 0;
         }
+    }
+
+    private int visaValidityYears() {
+        if (lockedVisaValidityYearsField == null) {
+            return lockedVisaValidityYears;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(lockedVisaValidityYearsField.getValue().trim()));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    private int lockedVisaEntries() {
+        if (lockedVisaEntriesField == null) {
+            return lockedVisaEntries;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(lockedVisaEntriesField.getValue().trim()));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    private int overstayDays() {
+        if (overstayDaysField == null) {
+            return overstayDays;
+        }
+        try {
+            return clampOverstay(Integer.parseInt(overstayDaysField.getValue().trim()));
+        } catch (NumberFormatException ignored) {
+            return overstayDays;
+        }
+    }
+
+    private static int clampOverstay(int value) {
+        return Math.max(0, Math.min(DeviceBlockEntity.MAX_OVERSTAY_DAYS, value));
     }
 
     @Override
@@ -679,13 +955,17 @@ public class DeviceConfigScreen extends VeriScreen {
                     left + 24, top + 170, 392, Ui.DIM);
             Ui.clipped(graphics, Component.translatable("screen.veriborder.config.gate_codes_hint2"),
                     left + 24, top + 182, 392, Ui.DIM);
+            Ui.clipped(graphics, Component.translatable("screen.veriborder.config.gate_behavior_hint"),
+                    left + 24, top + 196, 392, Ui.DIM);
             Ui.clipped(graphics, Component.translatable("screen.veriborder.config.airport_hint"),
-                    left + 24, top + 332, 392, Ui.DIM);
+                    left + 24, top + 378, 392, Ui.DIM);
         } else if (device.isGate()) {
             Ui.clipped(graphics, Component.translatable("screen.veriborder.config.exit_gate_hint"),
                     left + 24, top + 58, 392, Ui.AMBER);
             Ui.clipped(graphics, Component.translatable("screen.veriborder.config.airport_hint"),
-                    left + 24, top + 202, 392, Ui.DIM);
+                    left + 24, top + 200, 392, Ui.DIM);
+            Ui.clipped(graphics, Component.translatable("screen.veriborder.config.gate_behavior_hint"),
+                    left + 24, top + 210, 392, Ui.DIM);
         } else if (issuer) {
             // Second header line explains the lock section without overlapping
             // the first field label chip (which starts at y=64). The compact

@@ -207,6 +207,14 @@ public final class DocumentValidator {
                 code = VerificationResult.Code.WRONG_KIND;
             }
             reasons.add("verify.veriborder.reason.wrong_kind");
+        } else if (isStampDevice(device) && !isStampable(doc.kind())) {
+            // Stamp machines/history accept passports and HK/Macau permits; ID
+            // cards are never stamped. requiredKind() returns null for these so
+            // the explicit check above states the two accepted kinds.
+            if (code == VerificationResult.Code.OK) {
+                code = VerificationResult.Code.WRONG_KIND;
+            }
+            reasons.add("verify.veriborder.reason.wrong_kind");
         }
 
         if (device == DeviceType.AIRPORT_CHECKIN && doc.kind() == DocumentKind.PASSPORT) {
@@ -287,10 +295,26 @@ public final class DocumentValidator {
         }
         return switch (device) {
             case STATION_VERIFIER -> DocumentKind.ID_CARD;
-            case AIRPORT_CHECKIN, VISA_ISSUER, SELF_VISA, ENTRY_STAMP, EXIT_STAMP, STAMP_HISTORY -> DocumentKind.PASSPORT;
+            case AIRPORT_CHECKIN, VISA_ISSUER, SELF_VISA -> DocumentKind.PASSPORT;
             case ENDORSEMENT_MACHINE, SELF_ENDORSEMENT -> DocumentKind.PERMIT;
+            // Stamps accept PASSPORT or PERMIT; see isStampable / isStampDevice.
             default -> null;
         };
+    }
+
+    /** Stamp machines and the stamp history reader accept two document kinds. */
+    public static boolean isStampDevice(DeviceType device) {
+        return device == DeviceType.ENTRY_STAMP
+                || device == DeviceType.EXIT_STAMP
+                || device == DeviceType.STAMP_HISTORY;
+    }
+
+    /**
+     * Only passports and HK/Macau permits carry immigration stamps. Identity
+     * cards are never stamped, so stamp devices reject them explicitly.
+     */
+    public static boolean isStampable(DocumentKind kind) {
+        return kind == DocumentKind.PASSPORT || kind == DocumentKind.PERMIT;
     }
 
     public static boolean countryMatches(String left, String right) {

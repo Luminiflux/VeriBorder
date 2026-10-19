@@ -1,5 +1,8 @@
 package com.veriborder.block;
 
+import com.veriborder.border.BorderLog;
+import com.veriborder.border.BorderService;
+import com.veriborder.border.BorderSession;
 import com.veriborder.doc.DateUtil;
 import com.veriborder.doc.CredentialCode;
 import com.veriborder.doc.VisaRecord;
@@ -25,6 +28,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
@@ -40,6 +44,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.UUID;
 
 public final class DeviceService {
     private DeviceService() {
@@ -67,9 +72,18 @@ public final class DeviceService {
             case ENDORSEMENT_MACHINE, SELF_ENDORSEMENT -> openEndorsement(player, pos, device, type,
                     held != null && held.data.kind() == DocumentKind.PERMIT
                             ? held.slot : findFirstSlot(player, DocumentKind.PERMIT));
-            case HOTEL_READER, DESK_SCANNER, MANUAL_TERMINAL, AIRPORT_CHECKIN, STATION_VERIFIER ->
+            case HOTEL_READER, DESK_SCANNER, AIRPORT_CHECKIN, STATION_VERIFIER ->
                     openReader(player, pos, device, type, held, type == DeviceType.AIRPORT_CHECKIN
                             ? device.airportCountry() : "");
+            case MANUAL_TERMINAL -> {
+                // The manual terminal doubles as the officer console: OPs get the
+                // session/log overview, everyone else the normal document reader.
+                if (player.hasPermissions(2)) {
+                    openOfficer(player, pos, device);
+                } else {
+                    openReader(player, pos, device, type, held, "");
+                }
+            }
             case EGATE, EXIT_GATE -> useGate(player, pos, device, held);
             case ENTRY_STAMP, EXIT_STAMP -> useStamp(player, pos, device, type, held);
             case STAMP_HISTORY -> openHistory(player, pos, device, held);
@@ -159,6 +173,12 @@ public final class DeviceService {
         if (!(blockEntity instanceof DeviceBlockEntity device)) {
             return;
         }
+        // Terminal configuration is an admin action: OP level 2, checked on the
+        // server because the client can send this packet directly.
+        if (!player.hasPermissions(2)) {
+            message(player, "message.veriborder.permission.denied");
+            return;
+        }
         if (player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > 100.0D) {
             message(player, "message.veriborder.too_far");
             return;
@@ -195,7 +215,8 @@ public final class DeviceService {
     private static void openHistory(ServerPlayer player, BlockPos pos, DeviceBlockEntity device,
                                     @Nullable HeldDocument held) {
         CompoundTag payload = payload(device, DeviceType.STAMP_HISTORY);
-        if (held != null && held.data.kind() == DocumentKind.PASSPORT) {
+        // Stamp history covers passports and HK/Macau permits.
+        if (held != null && DocumentValidator.isStampable(held.data.kind())) {
             payload.putInt("slot", held.slot);
             payload.put("doc", held.data.tag().copy());
             payload.put("check", DocumentValidator.validate(held.data, DeviceType.STAMP_HISTORY, "").save());
@@ -226,7 +247,85 @@ public final class DeviceService {
         send(player, pos, DeviceType.BLACKLIST_TERMINAL.id(), payload);
     }
 
+    /**
+     * Officer console payload. The device id is {@code "officer"} (like
+     * {@code "config"}) so the client routes it to the officer screen instead of
+     * a reader; {@code officer=true} is the authoritative flag.
+     *
+     * <pre>
+     * deviceType String           "manual_terminal"
+     * officer    boolean          true
+     * sessions   ListTag          BorderSession compounds, newest entry first
+     * logs       ListTag          BorderLog compounds, newest first
+     * </pre>
+     */
+    private static void openOfficer(ServerPlayer player, BlockPos pos, @Nullable DeviceBlockEntity device) {
+        if (!player.hasPermissions(2)) {
+            message(player, "message.veriborder.permission.denied");
+            return;
+        }
+        CompoundTag payload = device == null ? new CompoundTag() : payload(device, DeviceType.MANUAL_TERMINAL);
+        payload.putString("deviceType", DeviceType.MANUAL_TERMINAL.id());
+        payload.putBoolean("officer", true);
+        payload.put("sessions", BorderService.sessionsTag(player.getServer()));
+        payload.put("logs", BorderService.logsTag(player.getServer(), BorderService.OFFICER_LOG_LIMIT));
+        send(player, pos, "officer", payload);
+    }
+
+    /**
+     * Officer-screen actions. They are OP level 2 and do not require a device to
+     * be looked at again, so the console keeps working after the terminal was
+     * broken or the player walked away; a refresh re-sends the current state.
+     */
+    private static void handleOfficerAction(ServerPlayer player, BlockPos pos, String action, CompoundTag data) {
+        if (!player.hasPermissions(2)) {
+            message(player, "message.veriborder.permission.denied");
+            return;
+        }
+        if ("officer_clear".equals(action)) {
+            UUID target = targetUuid(player, data);
+            if (target != null) {
+                // Logs an officer entry naming the operator.
+                BorderService.clearSession(player.getServer(), target, BorderService.playerName(player));
+            }
+        }
+        BlockEntity blockEntity = player.level().getBlockEntity(pos);
+        DeviceBlockEntity device = blockEntity instanceof DeviceBlockEntity found ? found : null;
+        openOfficer(player, pos, device);
+    }
+
+    /**
+     * Target UUID of an officer clear. Accepts the canonical {@code target}
+     * string (UUID) and tolerates {@code uuid} / {@code player}; a player name
+     * resolves to the online player.
+     */
+    @Nullable
+    private static UUID targetUuid(ServerPlayer player, CompoundTag data) {
+        String raw = data.getString("target").trim();
+        if (raw.isEmpty()) {
+            raw = data.getString("uuid").trim();
+        }
+        if (raw.isEmpty()) {
+            raw = data.getString("player").trim();
+        }
+        if (raw.isEmpty()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(raw);
+        } catch (IllegalArgumentException exception) {
+            MinecraftServer server = player.getServer();
+            ServerPlayer online = server == null ? null : server.getPlayerList().getPlayerByName(raw);
+            return online == null ? null : online.getUUID();
+        }
+    }
+
     public static void openModifier(ServerPlayer player) {
+        // The universal document modifier is a creative-only admin tool.
+        if (!player.hasPermissions(2)) {
+            message(player, "message.veriborder.permission.denied");
+            return;
+        }
         ListTag docs = scanDocuments(player);
         CompoundTag payload = new CompoundTag();
         payload.put("docs", docs);
@@ -235,6 +334,10 @@ public final class DeviceService {
     }
 
     public static void generateFromModifier(ServerPlayer player, CompoundTag data) {
+        if (!player.hasPermissions(2)) {
+            message(player, "message.veriborder.permission.denied");
+            return;
+        }
         DocumentKind kind;
         try {
             kind = DocumentKind.valueOf(data.getString("kind"));
@@ -269,7 +372,8 @@ public final class DeviceService {
 
     private static void useStamp(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, DeviceType type,
                                  @Nullable HeldDocument held) {
-        if (held == null || held.data.kind() != DocumentKind.PASSPORT) {
+        // Passports and HK/Macau permits are stamped; identity cards are not.
+        if (held == null || !DocumentValidator.isStampable(held.data.kind())) {
             CompoundTag payload = payload(device, type);
             payload.putInt("slot", -1);
             payload.putString("stampDirection", type == DeviceType.ENTRY_STAMP ? StampRecord.IN : StampRecord.OUT);
@@ -308,30 +412,90 @@ public final class DeviceService {
             openGateStatus(player, pos, device, type);
             return;
         }
-        VerificationResult result = DocumentValidator.validateGate(held.data, type, device.gateMode(),
-                device.gateCodes());
+        if (type == DeviceType.EXIT_GATE) {
+            useExitGate(player, pos, device, held);
+        } else {
+            useEntryGate(player, pos, device, held);
+        }
+    }
+
+    /**
+     * Entry gate. The matched visa/endorsement is deliberately <em>not</em>
+     * consumed here: the entry is recorded as a {@link BorderSession} and the
+     * record is only used up by the matching exit. A traveller who is already
+     * inside is always refused, whatever entries the document still shows.
+     */
+    private static void useEntryGate(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, HeldDocument held) {
+        if (BorderService.session(player) != null) {
+            denyGate(player, pos, device, held, BorderLog.IN, BorderService.REASON_ALREADY_ENTERED);
+            return;
+        }
+        VerificationResult result = DocumentValidator.validateGate(held.data, device.deviceType(),
+                device.gateMode(), device.gateCodes());
         if (!result.valid()) {
             // Code/mode failures are rejected before the gate state machine starts,
             // and the chat message names the required mode or the mismatched code.
-            CompoundTag payload = payload(device, type);
-            payload.putString("gateState", device.gateState().name());
-            payload.putString("gateMessage", "gate.veriborder.denied");
-            payload.put("check", result.save());
-            send(player, pos, type.id(), payload);
-            player.displayClientMessage(result.message(), false);
+            BorderService.deny(player, pos, held.data, null, BorderLog.IN, firstReason(result));
+            sendGateCheck(player, pos, device, result);
             return;
         }
-        if (device.startVerification(player, result)) {
-            // Exit gates never consume a visa/endorsement: leaving the country
-            // does not use up an entry permission. Entry gates consume the one
-            // active record whose code matched the gate's code list; visa-free
-            // matches keep the passport untouched and "all" mode never consumes.
-            if (type != DeviceType.EXIT_GATE) {
-                consumeGateEntry(player, held, device.gateMode(), device.gateCodes());
-            }
-            message(player, "message.veriborder.gate.verifying");
-        } else {
+        BorderService.EntryMatch match = BorderService.resolveEntry(held.data, device.gateMode(),
+                device.gateCodes());
+        if (match == null) {
+            // Defensive: validation passed but no credential could be bound.
+            BorderService.deny(player, pos, held.data, null, BorderLog.IN,
+                    DocumentValidator.REASON_GATE_CODE_MISMATCH);
+            sendGateCheck(player, pos, device, VerificationResult.fail(
+                    VerificationResult.Code.NO_MATCHING_CODE, DocumentValidator.REASON_GATE_CODE_MISMATCH));
+            return;
+        }
+        if (!device.startVerification(player, result)) {
             message(player, "message.veriborder.gate.busy");
+            return;
+        }
+        BorderService.beginEntry(player, pos, device.port(), device.overstayDays(), held.data, match);
+        autoGateStamp(player, device, held, StampRecord.IN);
+        message(player, "message.veriborder.gate.verifying");
+    }
+
+    /**
+     * Exit gate. Reads the stored session (gate codes/mode are ignored) and
+     * consumes exactly the record that entry bound; visa-free and
+     * {@code all}-mode entries consume nothing.
+     */
+    private static void useExitGate(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, HeldDocument held) {
+        BorderSession session = BorderService.session(player);
+        if (session == null) {
+            denyGate(player, pos, device, held, BorderLog.OUT, BorderService.REASON_NO_ENTRY_RECORD);
+            return;
+        }
+        if (!session.documentNumber().equals(held.data.number())) {
+            denyGate(player, pos, device, held, BorderLog.OUT, BorderService.REASON_SESSION_DOCUMENT_MISMATCH);
+            return;
+        }
+        VerificationResult result = DocumentValidator.validateGate(held.data, DeviceType.EXIT_GATE, "", List.of());
+        if (!result.valid()) {
+            BorderService.deny(player, pos, held.data, session, BorderLog.OUT, firstReason(result));
+            sendGateCheck(player, pos, device, result);
+            return;
+        }
+        int recordIndex = boundRecordIndex(held.data, session);
+        if (session.consumesRecord() && recordIndex < 0) {
+            denyGate(player, pos, device, held, BorderLog.OUT, BorderService.REASON_SESSION_RECORD_MISSING);
+            return;
+        }
+        if (!device.startVerification(player, result)) {
+            message(player, "message.veriborder.gate.busy");
+            return;
+        }
+        if (recordIndex >= 0) {
+            consumeBoundRecord(player, held, session.kind(), recordIndex);
+        }
+        boolean overstay = BorderService.finishExit(player, session, pos);
+        autoGateStamp(player, device, held, StampRecord.OUT);
+        if (overstay) {
+            // The exit is still allowed; the warning plus the OVERSTAY log record it.
+            player.displayClientMessage(Component.translatable(BorderService.MESSAGE_OVERSTAY), false);
         }
     }
 
@@ -342,50 +506,114 @@ public final class DeviceService {
         send(player, pos, type.id(), payload);
     }
 
-    private static void consumeGateEntry(ServerPlayer player, HeldDocument held, String gateMode,
-                                         List<String> gateCodes) {
-        String mode = DeviceBlockEntity.normalizeGateMode(gateMode);
-        if (DeviceBlockEntity.GATE_MODE_ALL.equals(mode)) {
-            return;
+    /** Index of the session-bound record in the presented document, or -1. */
+    private static int boundRecordIndex(DocumentData doc, BorderSession session) {
+        if (BorderSession.KIND_VISA.equals(session.kind())) {
+            List<CompoundTag> tags = doc.visaTags();
+            for (int i = 0; i < tags.size(); i++) {
+                VisaRecord record = VisaRecord.fromTag(tags.get(i));
+                if (record.active() && sameRecord(session, record.id(), record.code())) {
+                    return i;
+                }
+            }
+            return -1;
         }
-        List<String> codes = CredentialCode.normalizeAll(gateCodes);
-        if (codes.isEmpty()) {
-            return;
+        if (BorderSession.KIND_ENDORSEMENT.equals(session.kind())) {
+            List<CompoundTag> tags = doc.endorsementTags();
+            for (int i = 0; i < tags.size(); i++) {
+                EndorsementRecord record = EndorsementRecord.fromTag(tags.get(i));
+                if (record.active() && sameRecord(session, record.id(), record.code())) {
+                    return i;
+                }
+            }
+            return -1;
         }
+        return -1;
+    }
+
+    /**
+     * Identity of the bound record: the stored record id wins; the eight-digit
+     * code is only used for sessions without an id (visa-free or legacy).
+     */
+    private static boolean sameRecord(BorderSession session, String id, String code) {
+        if (!session.recordId().isBlank()) {
+            return session.recordId().equals(id);
+        }
+        return !session.code().isBlank() && session.code().equals(code);
+    }
+
+    /** Increments {@code usedEntries} on exactly one record and persists it. */
+    private static void consumeBoundRecord(ServerPlayer player, HeldDocument held, String kind, int index) {
         DocumentData doc = held.data;
-        if (doc.kind() == DocumentKind.PASSPORT) {
-            List<CompoundTag> visas = doc.visaTags();
-            for (int i = 0; i < visas.size(); i++) {
-                CompoundTag tag = visas.get(i);
-                VisaRecord record = VisaRecord.fromTag(tag);
-                if (record.active() && codes.contains(record.code())) {
-                    // Persist the effective code (legacy records derive it from
-                    // their id) so consuming an entry never changes the code the
-                    // gate was configured with.
-                    tag.putString("code", record.code());
-                    tag.putInt("usedEntries", tag.getInt("usedEntries") + 1);
-                    doc.updateVisa(i, tag);
-                    DocumentItem.writeDocument(held.stack, doc);
-                    sync(player, held.slot, held.stack);
-                    return;
-                }
+        if (BorderSession.KIND_VISA.equals(kind)) {
+            List<CompoundTag> tags = doc.visaTags();
+            if (index < 0 || index >= tags.size()) {
+                return;
             }
-            // Visa-free-only match: the passport entry is not consumed.
-        } else if (doc.kind() == DocumentKind.PERMIT) {
-            List<CompoundTag> endorsements = doc.endorsementTags();
-            for (int i = 0; i < endorsements.size(); i++) {
-                CompoundTag tag = endorsements.get(i);
-                EndorsementRecord record = EndorsementRecord.fromTag(tag);
-                if (record.active() && codes.contains(record.code())) {
-                    tag.putString("code", record.code());
-                    tag.putInt("usedEntries", tag.getInt("usedEntries") + 1);
-                    doc.updateEndorsement(i, tag);
-                    DocumentItem.writeDocument(held.stack, doc);
-                    sync(player, held.slot, held.stack);
-                    return;
-                }
+            CompoundTag tag = tags.get(index);
+            // Persist the effective code (legacy records derive it from their id)
+            // so consuming an entry never changes the code the gate was set to.
+            tag.putString("code", VisaRecord.fromTag(tag).code());
+            tag.putInt("usedEntries", tag.getInt("usedEntries") + 1);
+            doc.updateVisa(index, tag);
+        } else if (BorderSession.KIND_ENDORSEMENT.equals(kind)) {
+            List<CompoundTag> tags = doc.endorsementTags();
+            if (index < 0 || index >= tags.size()) {
+                return;
             }
+            CompoundTag tag = tags.get(index);
+            tag.putString("code", EndorsementRecord.fromTag(tag).code());
+            tag.putInt("usedEntries", tag.getInt("usedEntries") + 1);
+            doc.updateEndorsement(index, tag);
+        } else {
+            return;
         }
+        DocumentItem.writeDocument(held.stack, doc);
+        sync(player, held.slot, held.stack);
+    }
+
+    /** Gate auto stamp: passports and HK/Macau permits only, when enabled. */
+    private static void autoGateStamp(ServerPlayer player, DeviceBlockEntity device, HeldDocument held,
+                                      String direction) {
+        if (!device.autoStamp() || !DocumentValidator.isStampable(held.data.kind())) {
+            return;
+        }
+        held.data.addStamp(direction, device.port(), device.country(), device.officer());
+        DocumentItem.writeDocument(held.stack, held.data);
+        sync(player, held.slot, held.stack);
+    }
+
+    /** First machine-readable reason of a failed check, for the log detail. */
+    private static String firstReason(VerificationResult result) {
+        return result.reasons().isEmpty() ? "verify.veriborder.fail" : result.reasons().get(0);
+    }
+
+    /** Ordinary gate rejection payload; starts no animation. */
+    private static void sendGateCheck(ServerPlayer player, BlockPos pos, DeviceBlockEntity device,
+                                      VerificationResult result) {
+        CompoundTag payload = payload(device, device.deviceType());
+        payload.putString("gateState", device.gateState().name());
+        payload.putString("gateMessage", "gate.veriborder.denied");
+        payload.put("check", result.save());
+        send(player, pos, device.deviceType().id(), payload);
+        player.displayClientMessage(result.message(), false);
+    }
+
+    /**
+     * Session-level denial (already entered, no entry record, document
+     * mismatch, record missing). Logs the attempt and shows the plain reason;
+     * the gate stays idle and is not animated.
+     */
+    private static void denyGate(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, HeldDocument held,
+                                 String direction, String reasonKey) {
+        BorderService.deny(player, pos, held.data, BorderService.session(player), direction, reasonKey);
+        VerificationResult check = VerificationResult.fail(VerificationResult.Code.NOT_APPLICABLE, reasonKey);
+        CompoundTag payload = payload(device, device.deviceType());
+        payload.putString("gateState", device.gateState().name());
+        payload.putString("gateMessage", "gate.veriborder.denied");
+        payload.put("check", check.save());
+        send(player, pos, device.deviceType().id(), payload);
+        player.displayClientMessage(Component.translatable(reasonKey), false);
     }
 
     private static CompoundTag payload(DeviceBlockEntity device, DeviceType type) {
@@ -478,6 +706,12 @@ public final class DeviceService {
     }
 
     public static void handleAction(ServerPlayer player, BlockPos pos, String action, CompoundTag data, int slot) {
+        // Officer console actions are OP-only and independent of the block they
+        // were opened from, so they are handled before the device lookup.
+        if ("officer_clear".equals(action) || "officer_refresh".equals(action)) {
+            handleOfficerAction(player, pos, action, data);
+            return;
+        }
         BlockEntity blockEntity = player.level().getBlockEntity(pos);
         if (!(blockEntity instanceof DeviceBlockEntity device)) {
             return;
@@ -499,6 +733,12 @@ public final class DeviceService {
                 refresh(player, pos, device, slot);
             }
             case "save_config" -> {
+                // Configuration is an OP-2 admin action; the brush is still
+                // required as a second, physical gate on the same operation.
+                if (!player.hasPermissions(2)) {
+                    message(player, "message.veriborder.permission.denied");
+                    return;
+                }
                 if (!holdsBrush(player)) {
                     message(player, "message.veriborder.brush.required");
                     return;
@@ -512,6 +752,14 @@ public final class DeviceService {
                     // Codes are the only gate validation source. The block entity
                     // validates 8 digits and dedupes; the list has no length limit.
                     device.setGateCodes(data.getList("gateCodes", Tag.TAG_STRING));
+                    // 26.1 gate behaviour. Applied only when the screen sends the
+                    // keys, so an older client cannot silently reset the defaults.
+                    if (data.contains("autoStamp")) {
+                        device.setAutoStamp(data.getBoolean("autoStamp"));
+                    }
+                    if (data.contains("overstayDays")) {
+                        device.setOverstayDays(data.getInt("overstayDays"));
+                    }
                 }
                 if (device.deviceType().isIssuer()) {
                     device.setLockDocumentName(data.getBoolean("lockDocumentName"));
@@ -598,6 +846,50 @@ public final class DeviceService {
             device.setLockEndorsementType(data.getBoolean("lockEndorsementType"));
             device.setLockedEndorsementType(data.getString("lockedEndorsementType"));
         }
+        // 26.1 passport-attached visa locks. Only devices that can use them read
+        // the keys, and only when the screen actually sends them: an older client
+        // or another device kind leaves the stored values untouched.
+        if (type == DeviceType.PASSPORT_ISSUER) {
+            if (data.contains("lockIncludeVisa")) {
+                device.setLockIncludeVisa(data.getBoolean("lockIncludeVisa"));
+            }
+            if (data.contains("lockedIncludeVisa")) {
+                device.setLockedIncludeVisa(data.getBoolean("lockedIncludeVisa"));
+            }
+            if (data.contains("lockVisaEntries")) {
+                device.setLockVisaEntries(data.getBoolean("lockVisaEntries"));
+            }
+            if (data.contains("lockedVisaEntries")) {
+                device.setLockedVisaEntries(data.getInt("lockedVisaEntries"));
+            }
+            if (data.contains("lockVisaCountry")) {
+                device.setLockVisaCountry(data.getBoolean("lockVisaCountry"));
+            }
+            if (data.contains("lockedVisaCountry")) {
+                device.setLockedVisaCountry(data.getString("lockedVisaCountry"));
+            }
+            if (data.contains("lockVisaIssueDate")) {
+                device.setLockVisaIssueDate(data.getBoolean("lockVisaIssueDate"));
+            }
+            if (data.contains("lockedVisaIssueDate")) {
+                device.setLockedVisaIssueDate(data.getString("lockedVisaIssueDate"));
+            }
+            if (data.contains("lockVisaValidity")) {
+                device.setLockVisaValidity(data.getBoolean("lockVisaValidity"));
+            }
+            if (data.contains("lockedVisaValidityYears")) {
+                device.setLockedVisaValidityYears(data.getInt("lockedVisaValidityYears"));
+            }
+        }
+        if (type == DeviceType.PASSPORT_ISSUER || type == DeviceType.VISA_ISSUER
+                || type == DeviceType.SELF_VISA) {
+            if (data.contains("lockVisaName")) {
+                device.setLockVisaName(data.getBoolean("lockVisaName"));
+            }
+            if (data.contains("lockedVisaName")) {
+                device.setLockedVisaName(data.getString("lockedVisaName"));
+            }
+        }
     }
 
     private static void issueDocument(ServerPlayer player, DeviceBlockEntity device, CompoundTag data) {
@@ -677,9 +969,11 @@ public final class DeviceService {
                 doc.addEndorsement(initial);
             }
         }
-        if (expected == DocumentKind.PASSPORT && form.getBoolean("includeVisa")) {
+        if (expected == DocumentKind.PASSPORT) {
             // The visa is appended after the passport exists (and is signed) but
             // before the item stack is written, so it travels in the same NBT.
+            // The include/entries/country/date/validity/name locks are resolved
+            // server-side, so a forged "includeVisa" cannot bypass them.
             appendPassportVisa(device, style, form, doc);
         }
         Item item = switch (expected) {
@@ -698,33 +992,92 @@ public final class DeviceService {
     }
 
     /**
-     * Appends the optional visa carried by a newly issued passport. Locked place,
-     * visa type and visa code win over the submitted form; dates are inherited
-     * from the finished passport. A locked code is preserved verbatim
-     * ({@code addVisaExact}), otherwise the code is kept unique ({@code addVisa}).
+     * Appends the optional visa carried by a newly issued passport. The 26.1
+     * passport-visa locks are resolved by {@link #buildPassportVisa}; a locked
+     * code is preserved verbatim ({@code addVisaExact}), otherwise the code is
+     * kept unique ({@code addVisa}).
      */
     private static void appendPassportVisa(DeviceBlockEntity device, DocStyle style, CompoundTag form,
                                            DocumentData passport) {
-        VisaType lockedType = device.lockedVisaTypeOrNull();
-        VisaType visaType = device.lockVisaType() && lockedType != null
-                ? lockedType : VisaType.byId(form.getString("visaType"));
-        String country = device.lockPlace() && !device.lockedPlace().isBlank()
-                ? device.lockedPlace() : form.getString("visaCountry").trim();
-        if (country.isBlank()) {
-            country = style.defaultNationality();
+        CompoundTag visa = buildPassportVisa(device.locks(), passport, form,
+                style.defaultNationality());
+        if (visa == null) {
+            return;
         }
         boolean fixedCode = device.lockVisaCode() && CredentialCode.isValid(device.lockedVisaCode());
-        String code = fixedCode ? device.lockedVisaCode() : CredentialCode.sanitize(form.getString("visaCode"));
-        int entries = form.contains("visaEntries") ? Math.max(0, form.getInt("visaEntries")) : 1;
-        String authority = device.lockAuthority() && !device.lockedAuthority().isBlank()
-                ? device.lockedAuthority() : passport.authority();
-        CompoundTag visa = DocumentFactory.createAttachedVisa(passport, country, visaType, entries,
-                authority, code);
         if (fixedCode) {
             passport.addVisaExact(visa);
         } else {
             passport.addVisa(visa);
         }
+    }
+
+    /**
+     * Builds the optional visa attached to a newly issued passport, applying the
+     * 26.1 passport-visa locks. Pure (no block entity/world access) so every rule
+     * is unit-testable. Returns {@code null} when no visa is attached.
+     *
+     * <ul>
+     *   <li>include: {@code lockIncludeVisa} forces {@code lockedIncludeVisa},
+     *       otherwise the submitted form decides — a forged form cannot override
+     *       the lock in either direction.</li>
+     *   <li>entries: locked entries (0 = unlimited), else form {@code visaEntries}
+     *       (default 1).</li>
+     *   <li>country: locked visa country, else the legacy locked place, else the
+     *       form, else the passport style nationality.</li>
+     *   <li>name: locked visa name, else form {@code visaName} / {@code label}.</li>
+     *   <li>issue: a valid locked issue date, else the passport issue date.</li>
+     *   <li>expiry: locked validity (0/permanent), else the inherited passport
+     *       expiry or one year after issue.</li>
+     * </ul>
+     */
+    @Nullable
+    public static CompoundTag buildPassportVisa(DeviceBlockEntity.Locks locks, DocumentData passport,
+                                                CompoundTag form, String fallbackCountry) {
+        DeviceBlockEntity.Locks settings = locks == null ? DeviceBlockEntity.Locks.NONE : locks;
+        CompoundTag values = form == null ? new CompoundTag() : form;
+        boolean include = settings.lockIncludeVisa()
+                ? settings.lockedIncludeVisa() : values.getBoolean("includeVisa");
+        if (!include) {
+            return null;
+        }
+        VisaType lockedType = DeviceBlockEntity.visaTypeOrNull(settings.lockedVisaType());
+        VisaType visaType = settings.lockVisaType() && lockedType != null
+                ? lockedType : VisaType.byId(values.getString("visaType"));
+        String country = settings.lockVisaCountry() ? settings.lockedVisaCountry() : "";
+        if (country.isBlank() && settings.lockPlace()) {
+            country = settings.lockedPlace();
+        }
+        if (country.isBlank()) {
+            country = values.getString("visaCountry").trim();
+        }
+        if (country.isBlank()) {
+            country = fallbackCountry == null ? "" : fallbackCountry.trim();
+        }
+        int entries;
+        if (settings.lockVisaEntries()) {
+            entries = Math.max(0, settings.lockedVisaEntries());
+        } else {
+            entries = values.contains("visaEntries") ? Math.max(0, values.getInt("visaEntries")) : 1;
+        }
+        String label;
+        if (settings.lockVisaName()) {
+            label = settings.lockedVisaName();
+        } else {
+            label = values.getString("visaName").trim();
+            if (label.isBlank()) {
+                label = values.getString("label").trim();
+            }
+        }
+        String issue = settings.lockVisaIssueDate() && DateUtil.isValid(settings.lockedVisaIssueDate())
+                ? settings.lockedVisaIssueDate() : "";
+        String authority = settings.lockAuthority() && !settings.lockedAuthority().isBlank()
+                ? settings.lockedAuthority() : passport.authority();
+        boolean fixedCode = settings.lockVisaCode() && CredentialCode.isValid(settings.lockedVisaCode());
+        String code = fixedCode ? settings.lockedVisaCode()
+                : CredentialCode.sanitize(values.getString("visaCode"));
+        return DocumentFactory.createAttachedVisa(passport, country, visaType, entries, authority, code,
+                label, issue, settings.lockVisaValidity(), settings.lockedVisaValidityYears());
     }
 
     private static void issueVisa(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, CompoundTag data,
@@ -772,6 +1125,8 @@ public final class DeviceService {
             values.putString("issueDate", issue);
             values.putString("expiryDate", expiry);
             values.putString("authority", visaMachineAuthority(device));
+            // The kiosk has no name field: only an admin lock supplies a label.
+            values.putString("visaName", device.lockVisaName() ? device.lockedVisaName() : "");
             doc.addVisaExact(toVisa(values, visaMachineAuthority(device), code, true));
             message(player, "message.veriborder.visa.issued", country);
             DocumentItem.writeDocument(stack, doc);
@@ -788,7 +1143,7 @@ public final class DeviceService {
             List<String> used = new ArrayList<>(doc.allCredentialCodes());
             int count = 0;
             for (int i = 0; i < presets.size(); i++) {
-                CompoundTag values = applyVisaLocks(device,
+                CompoundTag values = applyVisaLocks(device.locks(),
                         presets.getCompound(i).getCompound("values"));
                 String code = CredentialCode.generateUnique(used);
                 used.add(code);
@@ -797,7 +1152,7 @@ public final class DeviceService {
             }
             message(player, "message.veriborder.visa.batch", count);
         } else {
-            CompoundTag form = applyVisaLocks(device, data);
+            CompoundTag form = applyVisaLocks(device.locks(), data);
             boolean fixedCode = device.lockVisaCode() && CredentialCode.isValid(device.lockedVisaCode());
             String requested = fixedCode ? device.lockedVisaCode() : form.getString("code");
             String code = CredentialCode.isValid(requested) ? requested.trim()
@@ -824,39 +1179,55 @@ public final class DeviceService {
         openVisa(player, pos, device, slot);
     }
 
-    private static CompoundTag toVisa(CompoundTag data, String fallbackAuthority, String code,
-                                      boolean forceAuthority) {
+    /**
+     * Builds a standalone visa record from the (already lock-filtered) form. The
+     * display label comes from {@code visaName}, falling back to {@code label};
+     * blank keeps the country/type display fallback.
+     */
+    public static CompoundTag toVisa(CompoundTag data, String fallbackAuthority, String code,
+                                     boolean forceAuthority) {
         VisaType visaType = VisaType.byId(data.getString("type"));
         String issue = DateUtil.isValid(data.getString("issueDate")) ? data.getString("issueDate") : DateUtil.today();
         String expiry = DateUtil.isValid(data.getString("expiryDate"))
                 ? data.getString("expiryDate") : DateUtil.plusYears(issue, 1);
         String authority = forceAuthority ? fallbackAuthority
                 : data.getString("authority").isBlank() ? fallbackAuthority : data.getString("authority");
+        String label = data.getString("visaName").trim();
+        if (label.isBlank()) {
+            label = data.getString("label").trim();
+        }
         return DocumentFactory.createVisa(data.getString("country"), visaType,
-                Math.max(0, data.getInt("entries")), issue, expiry, authority, code);
+                Math.max(0, data.getInt("entries")), issue, expiry, authority, code, label);
     }
 
     /**
      * Applies the issuer's visa locks to a submitted form or template. The
-     * returned copy carries the forced type/country/issue date and, when
+     * returned copy carries the forced type/country/issue date/name and, when
      * validity is locked, the expiry implied by {@link DocumentFactory#lockedExpiry}.
      */
-    private static CompoundTag applyVisaLocks(DeviceBlockEntity device, CompoundTag values) {
+    public static CompoundTag applyVisaLocks(DeviceBlockEntity.Locks locks, CompoundTag values) {
+        DeviceBlockEntity.Locks settings = locks == null ? DeviceBlockEntity.Locks.NONE : locks;
         CompoundTag form = values.copy();
-        VisaType lockedType = device.lockedVisaTypeOrNull();
-        if (device.lockVisaType() && lockedType != null) {
+        VisaType lockedType = DeviceBlockEntity.visaTypeOrNull(settings.lockedVisaType());
+        if (settings.lockVisaType() && lockedType != null) {
             form.putString("type", lockedType.id());
         }
-        if (device.lockPlace() && !device.lockedPlace().isBlank()) {
-            form.putString("country", device.lockedPlace());
+        if (settings.lockPlace() && !settings.lockedPlace().isBlank()) {
+            form.putString("country", settings.lockedPlace());
         }
-        if (device.lockIssueDate() && DateUtil.isValid(device.lockedIssueDate())) {
-            form.putString("issueDate", device.lockedIssueDate());
+        if (settings.lockIssueDate() && DateUtil.isValid(settings.lockedIssueDate())) {
+            form.putString("issueDate", settings.lockedIssueDate());
         }
-        if (device.lockValidity()) {
+        if (settings.lockValidity()) {
             String issue = DateUtil.isValid(form.getString("issueDate"))
                     ? form.getString("issueDate") : DateUtil.today();
-            form.putString("expiryDate", DocumentFactory.lockedExpiry(issue, device.lockedValidityYears()));
+            form.putString("expiryDate", DocumentFactory.lockedExpiry(issue, settings.lockedValidityYears()));
+        }
+        if (settings.lockVisaName()) {
+            // A locked blank value is meaningful: force the country/type fallback
+            // and prevent a forged label/visaName from surviving.
+            form.putString("visaName", settings.lockedVisaName());
+            form.putString("label", settings.lockedVisaName());
         }
         return form;
     }
@@ -1084,6 +1455,10 @@ public final class DeviceService {
     }
 
     public static void saveFromModifier(ServerPlayer player, int slot, CompoundTag incomingTag) {
+        if (!player.hasPermissions(2)) {
+            message(player, "message.veriborder.permission.denied");
+            return;
+        }
         if (incomingTag == null || incomingTag.isEmpty() || incomingTag.sizeInBytes() > 262144) {
             message(player, "message.veriborder.modifier.invalid");
             return;

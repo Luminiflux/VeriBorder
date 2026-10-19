@@ -4,6 +4,42 @@ Date: 2026-10-17
 Environment: Minecraft 1.20.1 / Forge 47.2.0 / Java 17.0.20.1 (Azul)  
 Project: `C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder`
 
+## 26.1 formal release verification
+
+```text
+DocumentCoreTest   46
+BorderDataTest     13
+VisaLockTest       10
+total              69 tests, 0 failures
+```
+
+Real Forge client:
+
+```text
+BorderCoreSmoke: 22/22 PASS
+  entry session created; usedEntries unchanged; IN stamp + ALLOW_IN log
+  re-entry denied ALREADY_ENTERED; single session; no consume
+  exit clears session; consumes exactly one; IN+OUT stamps; ALLOW_OUT log
+  exit without session denied; wrong document keeps session and is denied
+  permit entry/exit consumes and stamps twice; session cleared
+  overstay exit allowed + OVERSTAY log + session cleared
+  officer clear + OFFICER_CLEAR log
+
+Ui261Smoke: 3/3 PASS
+  OfficerScreen, gate config (autoStamp/overstay/batch), passport attached-visa panel
+  all render magenta=0
+```
+
+Additional checks:
+
+- `device_brush` and `document_modifier` recipe JSONs are absent; both items remain registered
+  and available in the creative tab.
+- OP level 2 checks on config, modifier and officer paths.
+- `preview_models.js`: 21 models, CHECKLIST all PASS, FAILURES none.
+- No debug classes in the jar.
+
+---
+
 ## 1.2.1 passport-attached visa / universal locks verification
 
 ```text

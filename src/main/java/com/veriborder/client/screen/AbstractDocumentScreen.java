@@ -201,8 +201,9 @@ public abstract class AbstractDocumentScreen extends VeriScreen {
             }
         } else if (tabIndex == 1) {
             for (VisaRecord visa : doc.visas()) {
-                rows.add(Component.literal("[" + visa.country() + "] #" + visa.code() + " "
-                        + Component.translatable(visa.type().translationKey()).getString()
+                rows.add(Component.literal("[" + visa.country() + "] "
+                        + DocumentData.visaDisplayLabel(visa)
+                        + "  #" + visa.code()
                         + "  " + visa.entriesText() + "  " + visa.expiryDate()
                         + "  " + Component.translatable("record.veriborder.status." + visa.status().toLowerCase()).getString()));
             }
