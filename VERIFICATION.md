@@ -4,6 +4,39 @@ Date: 2026-10-17
 Environment: Minecraft 1.20.1 / Forge 47.2.0 / Java 17.0.20.1 (Azul)  
 Project: `C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder`
 
+## 1.2.0-hotfix creative-tab crash fix
+
+Crash:
+
+```text
+java.lang.NullPointerException: Registry Object not present: veriborder:self_visa
+  at com.veriborder.registry.ModCreativeTabs.lambda$static$1(ModCreativeTabs.java:33)
+```
+
+Cause: the creative tab was filled from a `displayItems` lambda that called
+`DeviceItems.values().get()` on every device, including the newly added `self_visa`,
+before its registry object was guaranteed present on Connector/heavily-modded clients.
+
+Fix:
+
+- Removed the `displayItems` lambda from `CreativeModeTab.builder()`.
+- Added `ModCreativeTabs.buildContents(BuildCreativeModeTabContentsEvent)`, registered on
+  the mod event bus; it runs after registries are ready.
+- Every device registry object is guarded with `isPresent()` before `event.accept(...)`.
+
+Verification:
+
+```text
+DocumentCoreTest: 43 tests, 0 failures
+registry: block=true item=true roBlock=true roItem=true mapSize=21
+creative inventory opened: magenta=0
+```
+
+The client smoke opened `CreativeModeInventoryScreen` successfully and captured
+`registry-creative.png`; no `Registry Object not present` exception.
+
+---
+
 ## 1.2.0 self-service visa / fixed-code verification
 
 ```text

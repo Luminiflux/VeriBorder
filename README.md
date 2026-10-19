@@ -2,7 +2,9 @@
 
 **VeriBorder / 证界边检** is a Minecraft **1.20.1 Forge** mod by **Luminiflux** that recreates the complete real-world document chain — identity cards, passports, exit-entry permits, visas, endorsements and immigration stamps — together with the machines found in airports, land ports, hotels, government service halls and immigration halls.
 
-**Current release:** `1.2.0`.
+**Current release:** `1.2.0-hotfix`.
+
+> **1.2.0-hotfix:** fixed a startup/creative-inventory crash caused by filling the creative tab from the `displayItems` lambda before every device item's `RegistryObject` was present. Creative contents now come from Forge's `BuildCreativeModeTabContentsEvent` after registries are ready, with an `isPresent()` guard. The crash was `Registry Object not present: veriborder:self_visa`.
 
 > **1.2.0 feature update — self-service visa kiosk and machine-controlled codes.**
 >
@@ -70,7 +72,7 @@ gradlew.bat build
 The reobfuscated mod jar is produced at:
 
 ```text
-build/libs/veriborder-1.2.0.jar
+build/libs/veriborder-1.2.0-hotfix.jar
 ```
 
 The project also contains domain tests for the NBT model, integrity signing and validation rules:
@@ -82,7 +84,7 @@ gradlew.bat test
 ## Installation
 
 1. Install Minecraft Forge 47.x for 1.20.1.
-2. Put `veriborder-1.2.0.jar` into the `mods` folder.
+2. Put `veriborder-1.2.0-hotfix.jar` into the `mods` folder.
 3. Launch the game. The creative tab **VeriBorder · Documents & Terminals** contains every document sample and every machine.
 
 ---

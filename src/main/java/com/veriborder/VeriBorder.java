@@ -26,6 +26,7 @@ public final class VeriBorder {
         ModItems.ITEMS.register(modBus);
         ModBlockEntities.BLOCK_ENTITIES.register(modBus);
         ModCreativeTabs.TABS.register(modBus);
+        modBus.addListener(ModCreativeTabs::buildContents);
         ModNetwork.register();
         MinecraftForge.EVENT_BUS.register(this);
     }

@@ -1,6 +1,6 @@
 # VeriBorder 交接文档
 
-> 版本：1.2.0  
+> 版本：1.2.0-hotfix  
 > 作者：Luminiflux  
 > 项目目录：`C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder`
 
@@ -10,10 +10,13 @@ VeriBorder / 证界边检是 Minecraft 1.20.1 Forge 模组，用物品 NBT 模�
 身份证、护照、港澳通行证、签证、签注、出入境章，以及发证、核验、签注、闸机等设备。
 
 - Minecraft 1.20.1 / Forge 47.x / Java 17
-- 版本：1.2.0
+- 版本：1.2.0-hotfix
 - 21 台设备、21 个 block model、21 个 blockstate、254 张 block 贴图、26 条配方、21 个 loot table
 - 43 项单元测试、真实客户端 22 项功能验收通过
 - 不依赖任何外部交通模组
+
+> 1.2.0-hotfix：修复进入创造模式物品栏时 `Registry Object not present: veriborder:self_visa` 崩溃。
+> 创造栏内容改由 `BuildCreativeModeTabContentsEvent` 在注册完成后填充，并加 `isPresent()` 保护。
 
 ## 2. 构建
 
@@ -34,9 +37,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\preview_models.ps1
 
 产物：
 
-- `build/libs/veriborder-1.2.0.jar`
-- `dist/veriborder-1.2.0.jar`
-- `dist/veriborder-1.2.0-src.zip`
+- `build/libs/veriborder-1.2.0-hotfix.jar`
+- `dist/veriborder-1.2.0-hotfix.jar`
+- `dist/veriborder-1.2.0-hotfix-src.zip`
 - `dist/SHA256SUMS.txt`
 
 ## 3. 数据模型
@@ -93,10 +96,10 @@ FeatureSmoke120: 22/22 PASS
 - 专属音效尚未制作。
 - 不依赖外部交通模组，也不包含任何第三方模型/贴图。
 
-## 8. 1.2.0 交付
+## 8. 1.2.0-hotfix 交付
 
-- `dist/veriborder-1.2.0.jar`
-- `dist/veriborder-1.2.0-src.zip`
+- `dist/veriborder-1.2.0-hotfix.jar`
+- `dist/veriborder-1.2.0-hotfix-src.zip`
 - `dist/SHA256SUMS.txt`
-- jar SHA-256：`98E92D50BA3510A285F1725646DED5297567C20631B953C17B3CDF7A11505CAA`
+- jar SHA-256：`39F0A8A0988DEBE9496CDA894569240E80AEB92111F66BE4276A8EF68F438B75`
 - 源码包 SHA-256 以 `dist/SHA256SUMS.txt` 为准。
