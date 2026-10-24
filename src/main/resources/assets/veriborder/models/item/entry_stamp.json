@@ -1,3 +1,4 @@
 {
-    "parent":  "veriborder:block/entry_stamp"
+    "parent":  "veriborder:block/entry_stamp",
+    "gui_light":  "front"
 }

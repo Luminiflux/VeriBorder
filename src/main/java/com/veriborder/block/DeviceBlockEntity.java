@@ -59,16 +59,21 @@ public class DeviceBlockEntity extends BlockEntity {
     /**
      * Persisted + synced issuer lock configuration. Locked values are enforced on
      * the server, so a client that ignores them still cannot issue a different
-     * document name, authority, layout, place, date, validity, visa type/code,
-     * endorsement type or passport-attached visa (include/entries/country/issue/
-     * validity/name).
+     * document name, authority, layout, place, date, months-based validity, visa
+     * type/code, endorsement type or passport-attached visa
+     * (include/entries/country/issue/validity/name).
+     *
+     * <p>26.2 month precision: the two validity locks are stored as <b>months</b>
+     * ({@code lockedValidityMonths} / {@code lockedVisaValidityMonths}). The old
+     * year keys are still written as {@code months / 12} for older readers and are
+     * migrated to months ({@code years * 12}) when a legacy tag is loaded.</p>
      */
     public record Locks(boolean lockDocumentName, String lockedDocumentName,
                         boolean lockAuthority, String lockedAuthority,
                         boolean lockStyle, String lockedStyle,
                         boolean lockPlace, String lockedPlace,
                         boolean lockIssueDate, String lockedIssueDate,
-                        boolean lockValidity, int lockedValidityYears,
+                        boolean lockValidity, int lockedValidityMonths,
                         boolean lockVisaType, String lockedVisaType,
                         boolean lockVisaCode, String lockedVisaCode,
                         boolean lockEndorsementType, String lockedEndorsementType,
@@ -76,7 +81,7 @@ public class DeviceBlockEntity extends BlockEntity {
                         boolean lockVisaEntries, int lockedVisaEntries,
                         boolean lockVisaCountry, String lockedVisaCountry,
                         boolean lockVisaIssueDate, String lockedVisaIssueDate,
-                        boolean lockVisaValidity, int lockedVisaValidityYears,
+                        boolean lockVisaValidity, int lockedVisaValidityMonths,
                         boolean lockVisaName, String lockedVisaName) {
         public static final Locks NONE = new Locks(false, "", false, "",
                 false, "", false, "", false, "", false, 0,
@@ -96,6 +101,8 @@ public class DeviceBlockEntity extends BlockEntity {
             lockedVisaIssueDate = normalize(lockedVisaIssueDate);
             lockedVisaName = normalize(lockedVisaName);
             lockedVisaEntries = Math.max(0, lockedVisaEntries);
+            lockedValidityMonths = clampValidityMonths(lockedValidityMonths);
+            lockedVisaValidityMonths = clampValidityMonths(lockedVisaValidityMonths);
         }
 
         /** Pre-1.2.1 lock view (document name and authority only). */
@@ -112,13 +119,13 @@ public class DeviceBlockEntity extends BlockEntity {
                      boolean lockStyle, String lockedStyle,
                      boolean lockPlace, String lockedPlace,
                      boolean lockIssueDate, String lockedIssueDate,
-                     boolean lockValidity, int lockedValidityYears,
+                     boolean lockValidity, int lockedValidityMonths,
                      boolean lockVisaType, String lockedVisaType,
                      boolean lockVisaCode, String lockedVisaCode,
                      boolean lockEndorsementType, String lockedEndorsementType) {
             this(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority,
                     lockStyle, lockedStyle, lockPlace, lockedPlace,
-                    lockIssueDate, lockedIssueDate, lockValidity, lockedValidityYears,
+                    lockIssueDate, lockedIssueDate, lockValidity, lockedValidityMonths,
                     lockVisaType, lockedVisaType, lockVisaCode, lockedVisaCode,
                     lockEndorsementType, lockedEndorsementType,
                     false, false, false, 0, false, "", false, "", false, 0, false, "");
@@ -140,7 +147,7 @@ public class DeviceBlockEntity extends BlockEntity {
                     tag.getBoolean("lockIssueDate"),
                     tag.getString("lockedIssueDate"),
                     tag.getBoolean("lockValidity"),
-                    tag.getInt("lockedValidityYears"),
+                    validityMonths(tag),
                     tag.getBoolean("lockVisaType"),
                     tag.getString("lockedVisaType"),
                     tag.getBoolean("lockVisaCode"),
@@ -156,7 +163,7 @@ public class DeviceBlockEntity extends BlockEntity {
                     tag.getBoolean("lockVisaIssueDate"),
                     tag.getString("lockedVisaIssueDate"),
                     tag.getBoolean("lockVisaValidity"),
-                    tag.getInt("lockedVisaValidityYears"),
+                    visaValidityMonths(tag),
                     tag.getBoolean("lockVisaName"),
                     tag.getString("lockedVisaName")
             );
@@ -174,7 +181,10 @@ public class DeviceBlockEntity extends BlockEntity {
             tag.putBoolean("lockIssueDate", lockIssueDate);
             tag.putString("lockedIssueDate", lockedIssueDate);
             tag.putBoolean("lockValidity", lockValidity);
-            tag.putInt("lockedValidityYears", lockedValidityYears);
+            // 26.2 month precision: months are authoritative, the legacy year key
+            // is kept (floor) so an older build still reads a usable value.
+            tag.putInt("lockedValidityMonths", lockedValidityMonths);
+            tag.putInt("lockedValidityYears", lockedValidityMonths / 12);
             tag.putBoolean("lockVisaType", lockVisaType);
             tag.putString("lockedVisaType", lockedVisaType);
             tag.putBoolean("lockVisaCode", lockVisaCode);
@@ -190,7 +200,8 @@ public class DeviceBlockEntity extends BlockEntity {
             tag.putBoolean("lockVisaIssueDate", lockVisaIssueDate);
             tag.putString("lockedVisaIssueDate", lockedVisaIssueDate);
             tag.putBoolean("lockVisaValidity", lockVisaValidity);
-            tag.putInt("lockedVisaValidityYears", lockedVisaValidityYears);
+            tag.putInt("lockedVisaValidityMonths", lockedVisaValidityMonths);
+            tag.putInt("lockedVisaValidityYears", lockedVisaValidityMonths / 12);
             tag.putBoolean("lockVisaName", lockVisaName);
             tag.putString("lockedVisaName", lockedVisaName);
             return tag;
@@ -199,6 +210,42 @@ public class DeviceBlockEntity extends BlockEntity {
         private static String normalize(String value) {
             return value == null ? "" : value.trim();
         }
+    }
+
+    /** Upper bound for a validity lock (100 years) so a forged tag cannot overflow. */
+    public static final int MAX_VALIDITY_MONTHS = 1200;
+
+    /** 0 months means "permanent"; everything else is clamped into a sane range. */
+    public static int clampValidityMonths(int months) {
+        return Math.max(0, Math.min(MAX_VALIDITY_MONTHS, months));
+    }
+
+    /**
+     * Reads a month-based validity from NBT, migrating a legacy year value
+     * ({@code lockedValidityYears} × 12) when the month key is absent. Pure, so
+     * the migration rule is unit-testable.
+     */
+    public static int validityMonths(CompoundTag tag) {
+        return migrateValidityMonths(tag, "lockedValidityMonths", "lockedValidityYears");
+    }
+
+    /** Visa counterpart of {@link #validityMonths(CompoundTag)}. */
+    public static int visaValidityMonths(CompoundTag tag) {
+        return migrateValidityMonths(tag, "lockedVisaValidityMonths", "lockedVisaValidityYears");
+    }
+
+    /**
+     * Month-first read with a legacy year fallback: an explicit month key wins
+     * (including 0 = permanent); otherwise the old year key is expanded ×12.
+     */
+    public static int migrateValidityMonths(CompoundTag tag, String monthsKey, String yearsKey) {
+        if (tag == null) {
+            return 0;
+        }
+        if (tag.contains(monthsKey)) {
+            return clampValidityMonths(tag.getInt(monthsKey));
+        }
+        return clampValidityMonths(tag.getInt(yearsKey) * 12);
     }
 
     private String port = "北京首都国际机场 T3";
@@ -265,9 +312,9 @@ public class DeviceBlockEntity extends BlockEntity {
     /** Locked issue date (YYYY-MM-DD) for documents, visas and endorsements. */
     private boolean lockIssueDate;
     private String lockedIssueDate = "";
-    /** Locked validity in years; 0 (or less) means permanent. */
+    /** Locked validity in <b>months</b> (26.2 month precision); 0 means permanent. */
     private boolean lockValidity;
-    private int lockedValidityYears;
+    private int lockedValidityMonths;
     /** Locked visa type id, used by visa issuers, self-visa and attached visas. */
     private boolean lockVisaType;
     private String lockedVisaType = "";
@@ -289,9 +336,9 @@ public class DeviceBlockEntity extends BlockEntity {
     /** Passport issuer: locked attached-visa issue date (YYYY-MM-DD). */
     private boolean lockVisaIssueDate;
     private String lockedVisaIssueDate = "";
-    /** Passport issuer: locked attached-visa validity in years; 0 means permanent. */
+    /** Passport issuer: locked attached-visa validity in months; 0 means permanent. */
     private boolean lockVisaValidity;
-    private int lockedVisaValidityYears;
+    private int lockedVisaValidityMonths;
     /** Passport/visa issuer: locked attached-visa display label. */
     private boolean lockVisaName;
     private String lockedVisaName = "";
@@ -844,8 +891,9 @@ public class DeviceBlockEntity extends BlockEntity {
         return lockValidity;
     }
 
-    public int lockedValidityYears() {
-        return lockedValidityYears;
+    /** Locked document validity in months (0 = permanent). */
+    public int lockedValidityMonths() {
+        return lockedValidityMonths;
     }
 
     public boolean lockVisaType() {
@@ -908,8 +956,9 @@ public class DeviceBlockEntity extends BlockEntity {
         return lockVisaValidity;
     }
 
-    public int lockedVisaValidityYears() {
-        return lockedVisaValidityYears;
+    /** Locked attached-visa validity in months (0 = permanent). */
+    public int lockedVisaValidityMonths() {
+        return lockedVisaValidityMonths;
     }
 
     public boolean lockVisaName() {
@@ -1015,8 +1064,9 @@ public class DeviceBlockEntity extends BlockEntity {
         changed();
     }
 
-    public void setLockedValidityYears(int value) {
-        lockedValidityYears = value;
+    /** Stores the locked document validity in months (clamped, 0 = permanent). */
+    public void setLockedValidityMonths(int value) {
+        lockedValidityMonths = clampValidityMonths(value);
         changed();
     }
 
@@ -1095,8 +1145,9 @@ public class DeviceBlockEntity extends BlockEntity {
         changed();
     }
 
-    public void setLockedVisaValidityYears(int value) {
-        lockedVisaValidityYears = value;
+    /** Stores the locked attached-visa validity in months (clamped, 0 = permanent). */
+    public void setLockedVisaValidityMonths(int value) {
+        lockedVisaValidityMonths = clampValidityMonths(value);
         changed();
     }
 
@@ -1185,11 +1236,11 @@ public class DeviceBlockEntity extends BlockEntity {
     public Locks locks() {
         return new Locks(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority,
                 lockStyle, lockedStyle, lockPlace, lockedPlace, lockIssueDate, lockedIssueDate,
-                lockValidity, lockedValidityYears, lockVisaType, lockedVisaType,
+                lockValidity, lockedValidityMonths, lockVisaType, lockedVisaType,
                 lockVisaCode, lockedVisaCode, lockEndorsementType, lockedEndorsementType,
                 lockIncludeVisa, lockedIncludeVisa, lockVisaEntries, lockedVisaEntries,
                 lockVisaCountry, lockedVisaCountry, lockVisaIssueDate, lockedVisaIssueDate,
-                lockVisaValidity, lockedVisaValidityYears, lockVisaName, lockedVisaName);
+                lockVisaValidity, lockedVisaValidityMonths, lockVisaName, lockedVisaName);
     }
 
     public void setLockDocumentName(boolean value) {
@@ -1615,7 +1666,7 @@ public class DeviceBlockEntity extends BlockEntity {
         lockIssueDate = loaded.lockIssueDate();
         lockedIssueDate = loaded.lockedIssueDate();
         lockValidity = loaded.lockValidity();
-        lockedValidityYears = loaded.lockedValidityYears();
+        lockedValidityMonths = loaded.lockedValidityMonths();
         lockVisaType = loaded.lockVisaType();
         lockedVisaType = loaded.lockedVisaType();
         lockVisaCode = loaded.lockVisaCode();
@@ -1631,7 +1682,7 @@ public class DeviceBlockEntity extends BlockEntity {
         lockVisaIssueDate = loaded.lockVisaIssueDate();
         lockedVisaIssueDate = loaded.lockedVisaIssueDate();
         lockVisaValidity = loaded.lockVisaValidity();
-        lockedVisaValidityYears = loaded.lockedVisaValidityYears();
+        lockedVisaValidityMonths = loaded.lockedVisaValidityMonths();
         lockVisaName = loaded.lockVisaName();
         lockedVisaName = loaded.lockedVisaName();
         lockedStyleTemplate = lockedStyle.isEmpty()

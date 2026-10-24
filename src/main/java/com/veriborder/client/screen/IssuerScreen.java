@@ -4,6 +4,7 @@ import com.veriborder.block.DeviceType;
 import com.veriborder.client.BetterButton;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
+import com.veriborder.client.ui.BirthDatePicker;
 import com.veriborder.client.ui.Dropdown;
 import com.veriborder.client.ui.PagedList;
 import com.veriborder.client.ui.TabStrip;
@@ -63,7 +64,8 @@ public class IssuerScreen extends VeriScreen {
     private final boolean lockIssueDate;
     private final String lockedIssueDate;
     private final boolean lockValidity;
-    private final int lockedValidityYears;
+    /** 26.2 month precision: locked document validity in months (0 = permanent). */
+    private final int lockedValidityMonths;
     private final boolean lockVisaType;
     private final VisaType lockedVisaType;
     private final boolean lockVisaCode;
@@ -77,7 +79,8 @@ public class IssuerScreen extends VeriScreen {
     private final boolean lockVisaIssueDate;
     private final String lockedVisaIssueDate;
     private final boolean lockVisaValidity;
-    private final int lockedVisaValidityYears;
+    /** 26.2 month precision: locked attached-visa validity in months (0 = permanent). */
+    private final int lockedVisaValidityMonths;
     private final boolean lockVisaName;
     private final String lockedVisaName;
     /** 26.2 nationality lock: the holder nationality is fixed by the terminal. */
@@ -103,7 +106,8 @@ public class IssuerScreen extends VeriScreen {
     private EditBox name;
     private EditBox nameLatin;
     private EditBox number;
-    private EditBox birth;
+    /** 26.2: date of birth is three dropdowns (year / month / day), never typed. */
+    private BirthDatePicker birth;
     private EditBox nationality;
     private EditBox authority;
     private EditBox place;
@@ -124,7 +128,15 @@ public class IssuerScreen extends VeriScreen {
             "none", EndorsementType.ONE_YEAR_MULTI.id(), EndorsementType.THREE_MONTH_SINGLE.id(),
             EndorsementType.OTHER.id()
     };
-    private int endorsementChoice = 1;
+    /** Default of the index above: three months, one entry (26.2 permit default). */
+    private static final int DEFAULT_ENDORSEMENT_CHOICE = 2;
+    /**
+     * 26.2: the built-in endorsement a permit carries. A locked type is forced by
+     * the terminal - the dropdown is read-only and the server ignores the form.
+     */
+    private final boolean lockEndorsementType;
+    private final EndorsementType lockedEndorsementType;
+    private int endorsementChoice = DEFAULT_ENDORSEMENT_CHOICE;
 
     public IssuerScreen(DeviceType device, BlockPos pos, CompoundTag payload) {
         super(Component.translatable(device.translationKey()), 520, 400);
@@ -159,7 +171,11 @@ public class IssuerScreen extends VeriScreen {
         // instead of silently becoming editable.
         this.lockIssueDate = payload.getBoolean("lockIssueDate");
         this.lockValidity = payload.getBoolean("lockValidity");
-        this.lockedValidityYears = payload.getInt("lockedValidityYears");
+        // 26.2 month precision: months are authoritative, a legacy year payload
+        // (older device NBT) is migrated x12.
+        this.lockedValidityMonths = payload.contains("lockedValidityMonths")
+                ? Math.max(0, payload.getInt("lockedValidityMonths"))
+                : Math.max(0, payload.getInt("lockedValidityYears") * 12);
         VisaType resolvedVisaType = resolveVisaType(payload.getString("lockedVisaType"));
         this.lockedVisaType = resolvedVisaType == null ? VisaType.TOURIST : resolvedVisaType;
         this.lockVisaType = payload.getBoolean("lockVisaType") && resolvedVisaType != null;
@@ -179,7 +195,9 @@ public class IssuerScreen extends VeriScreen {
         this.lockedVisaIssueDate = visaIssueValue;
         this.lockVisaIssueDate = payload.getBoolean("lockVisaIssueDate") && DateUtil.isValid(visaIssueValue);
         this.lockVisaValidity = payload.getBoolean("lockVisaValidity");
-        this.lockedVisaValidityYears = payload.getInt("lockedVisaValidityYears");
+        this.lockedVisaValidityMonths = payload.contains("lockedVisaValidityMonths")
+                ? Math.max(0, payload.getInt("lockedVisaValidityMonths"))
+                : Math.max(0, payload.getInt("lockedVisaValidityYears") * 12);
         String visaNameValue = payload.getString("lockedVisaName").trim();
         this.lockedVisaName = visaNameValue;
         // A locked blank name is meaningful: it forces the country/type fallback.
@@ -190,6 +208,17 @@ public class IssuerScreen extends VeriScreen {
         this.lockedNationality = nationalityValue;
         this.lockNationality = payload.getBoolean("lockNationality") && !nationalityValue.isBlank();
         this.visaType = lockVisaType ? lockedVisaType : VisaType.TOURIST;
+        // 26.2 permit built-in endorsement: the terminal's locked type is shown
+        // read-only; otherwise the applicant picks one, defaulting to the
+        // three-month single-entry endorsement the permit is expected to carry.
+        EndorsementType resolvedEndorsementType =
+                EndorsementType.byIdOrNull(payload.getString("lockedEndorsementType"));
+        this.lockedEndorsementType = resolvedEndorsementType == null
+                ? EndorsementType.THREE_MONTH_SINGLE : resolvedEndorsementType;
+        this.lockEndorsementType = payload.getBoolean("lockEndorsementType")
+                && resolvedEndorsementType != null;
+        this.endorsementChoice = endorsementIndex(lockEndorsementType
+                ? lockedEndorsementType : EndorsementType.THREE_MONTH_SINGLE);
         this.accent = device.accentColor();
         readRegistry(payload);
         this.machineNationality = machineNationalityOf(payload);
@@ -244,6 +273,18 @@ public class IssuerScreen extends VeriScreen {
         return null;
     }
 
+    /** Index of an endorsement type in {@link #endorsementChoices}. */
+    private int endorsementIndex(EndorsementType type) {
+        if (type != null) {
+            for (int i = 0; i < endorsementChoices.length; i++) {
+                if (endorsementChoices[i].equals(type.id())) {
+                    return i;
+                }
+            }
+        }
+        return DEFAULT_ENDORSEMENT_CHOICE;
+    }
+
     /**
      * The attached-visa country follows {@code lockVisaCountry}; when that lock
      * is off the server still honours the legacy {@code lockPlace}, so the form
@@ -290,6 +331,8 @@ public class IssuerScreen extends VeriScreen {
         if (kind == DocumentKind.PERMIT) {
             // 26.4: "initial endorsement" is a dropdown (none + 3 types) instead
             // of a cycle button; the stored wire value is still the type id.
+            // 26.2: the terminal may LOCK the type; the control then shows the
+            // forced value read-only (the server enforces it either way).
             List<Dropdown.Option> endorsements = new ArrayList<>();
             for (int i = 0; i < endorsementChoices.length; i++) {
                 String id = endorsementChoices[i];
@@ -298,21 +341,36 @@ public class IssuerScreen extends VeriScreen {
                         : Component.translatable(EndorsementType.byId(id).translationKey()).getString();
                 endorsements.add(new Dropdown.Option(String.valueOf(i), label));
             }
-            addDropdown(Dropdown.at(left + 164, top + FOOTER_Y, 190)
-                    .height(22)
-                    .prefix(Component.translatable("field.veriborder.initial_endorsement_short").getString())
-                    .options(endorsements)
-                    .selected(String.valueOf(endorsementChoice))
-                    .tooltip(Component.translatable("field.veriborder.initial_endorsement"))
-                    .onChange(id -> {
-                        try {
-                            endorsementChoice = Math.max(0, Math.min(endorsementChoices.length - 1,
-                                    Integer.parseInt(id)));
-                        } catch (NumberFormatException ignored) {
-                            endorsementChoice = 1;
-                        }
-                        rebuildWidgets();
-                    }));
+            if (lockEndorsementType) {
+                addDropdown(Dropdown.at(left + 164, top + FOOTER_Y, 190)
+                        .height(22)
+                        .prefix(Component.translatable("field.veriborder.initial_endorsement_short").getString())
+                        .options(List.of(new Dropdown.Option(
+                                lockedEndorsementType.id(),
+                                Component.translatable(lockedEndorsementType.translationKey()).getString())))
+                        .selected(lockedEndorsementType.id())
+                        .enabled(false)
+                        .tooltip(Component.translatable("hint.veriborder.locked")));
+            } else {
+                addDropdown(Dropdown.at(left + 164, top + FOOTER_Y, 190)
+                        .height(22)
+                        .prefix(Component.translatable("field.veriborder.initial_endorsement_short").getString())
+                        .options(endorsements)
+                        .selected(String.valueOf(endorsementChoice))
+                        // The panel opens upward: the control sits in the footer,
+                        // so a downward list would hang off the panel.
+                        .panelBottom(top + FOOTER_Y - 4)
+                        .tooltip(Component.translatable("field.veriborder.initial_endorsement"))
+                        .onChange(id -> {
+                            try {
+                                endorsementChoice = Math.max(0, Math.min(endorsementChoices.length - 1,
+                                        Integer.parseInt(id)));
+                            } catch (NumberFormatException ignored) {
+                                endorsementChoice = DEFAULT_ENDORSEMENT_CHOICE;
+                            }
+                            rebuildWidgets();
+                        }));
+            }
         }
         addRenderableWidget(new BetterButton(left + 394, top + FOOTER_Y, 102, 22,
                 Component.translatable("button.veriborder.close"), button -> onClose(), Ui.MUTED, true));
@@ -390,8 +448,11 @@ public class IssuerScreen extends VeriScreen {
                     captureApplicant();
                     rebuildWidgets();
                 }));
-        birth = addField(left + 24, top + 180, 214, "field.veriborder.birth", formCache.getString("birthDate"),
-                "hint.veriborder.date");
+        // 26.2: the birthday is picked from three dropdowns (year / month / day)
+        // instead of a free-text field; the written value is unchanged.
+        birth = BirthDatePicker.at(left + 24, top + 180, formCache.getString("birthDate"),
+                next -> formCache.putString("birthDate", next.value()));
+        birth.register(this::addDropdown);
         if (!lockNationality && machineNationality.isBlank() && !registryCountries.isEmpty()) {
             // 26.3: the nationality selector reads the credential registry's
             // country/region list instead of a free-text field. 26.4: dropdown
@@ -721,8 +782,8 @@ public class IssuerScreen extends VeriScreen {
     }
 
     private String autoExpiry(String issueDate) {
-        return lockedValidityYears <= 0 ? DateUtil.PERMANENT
-                : DateUtil.plusYears(issueDate, lockedValidityYears);
+        return lockedValidityMonths <= 0 ? DateUtil.PERMANENT
+                : DateUtil.plusMonths(issueDate, lockedValidityMonths);
     }
 
     private String visaIssueValue() {
@@ -731,8 +792,8 @@ public class IssuerScreen extends VeriScreen {
 
     private String visaExpiryValue() {
         if (lockVisaValidity) {
-            return lockedVisaValidityYears <= 0 ? DateUtil.PERMANENT
-                    : DateUtil.plusYears(visaIssueValue(), lockedVisaValidityYears);
+            return lockedVisaValidityMonths <= 0 ? DateUtil.PERMANENT
+                    : DateUtil.plusMonths(visaIssueValue(), lockedVisaValidityMonths);
         }
         return expiryValue();
     }
@@ -866,7 +927,10 @@ public class IssuerScreen extends VeriScreen {
             formCache.putString("number", number.getValue());
         }
         formCache.putString("sex", sex);
-        formCache.putString("birthDate", birth.getValue());
+        if (birth != null) {
+            // Always a valid YYYY-MM-DD: the three dropdowns cannot produce anything else.
+            formCache.putString("birthDate", birth.value());
+        }
         if (nationality != null) {
             formCache.putString("nationality", nationality.getValue());
         }
@@ -1029,8 +1093,13 @@ public class IssuerScreen extends VeriScreen {
         if (lockNumber) {
             data.putString("number", "");
         }
-        if (kind == DocumentKind.PERMIT && !"none".equals(endorsementChoices[endorsementChoice])) {
-            data.putString("initialEndorsementType", endorsementChoices[endorsementChoice]);
+        if (kind == DocumentKind.PERMIT) {
+            // 26.2: the permit carries a built-in endorsement. The type is always
+            // sent - a locked terminal's value here is advisory (the server
+            // re-reads the lock from the block entity), and "none" is the only way
+            // to ask for no endorsement on an unlocked machine.
+            data.putString("initialEndorsementType", lockEndorsementType
+                    ? lockedEndorsementType.id() : endorsementChoices[endorsementChoice]);
         }
         if (kind == DocumentKind.PASSPORT) {
             data.putBoolean("includeVisa", lockIncludeVisa ? lockedIncludeVisa : includeVisa);
@@ -1078,16 +1147,19 @@ public class IssuerScreen extends VeriScreen {
             default -> renderApplicantTab(graphics);
         }
         if (lockValidity) {
-            String years = lockedValidityYears <= 0
-                    ? Component.translatable("date.veriborder.permanent").getString()
-                    : Component.translatable("screen.veriborder.years", lockedValidityYears).getString();
+            String validity = Ui.validityText(lockedValidityMonths);
             String expiryText = tab == TAB_VISA ? visaExpiryValue() : expiryValue();
             Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.validity_locked",
-                    years, expiryText), left + 24, top + 378, 472, Ui.DIM);
+                    validity, expiryText), left + 24, top + 378, 472, Ui.DIM);
         }
         if (kind != DocumentKind.PERMIT) {
             Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.hint"), left + 164,
                     top + 380, 222, Ui.DIM);
+        } else if (lockEndorsementType) {
+            // The permit's built-in endorsement is forced by this terminal.
+            Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.endorsement_locked",
+                    Component.translatable(lockedEndorsementType.translationKey()).getString()),
+                    left + 164, top + 380, 222, Ui.AMBER);
         }
     }
 
@@ -1115,11 +1187,9 @@ public class IssuerScreen extends VeriScreen {
         Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.hint"), left + 258,
                 top + 236, 238, Ui.MUTED);
         if (lockValidity) {
-            String years = lockedValidityYears <= 0
-                    ? Component.translatable("date.veriborder.permanent").getString()
-                    : Component.translatable("screen.veriborder.years", lockedValidityYears).getString();
-            Ui.clipped(graphics, Component.translatable("screen.veriborder.lock.validity_line", years,
-                    expiryValue()), left + 258, top + 256, 238, Ui.AMBER);
+            Ui.clipped(graphics, Component.translatable("screen.veriborder.lock.validity_line",
+                    Ui.validityText(lockedValidityMonths), expiryValue()),
+                    left + 258, top + 256, 238, Ui.AMBER);
         }
         Ui.clipped(graphics, Component.translatable("screen.veriborder.terminal.edit_footer"),
                 left + 258, top + 276, 238, Ui.DIM);
@@ -1207,7 +1277,7 @@ public class IssuerScreen extends VeriScreen {
             tag.putString("nationality", nationality.getValue());
         }
         if (birth != null) {
-            tag.putString("birthDate", birth.getValue());
+            tag.putString("birthDate", birth.value());
         }
         if (authority != null) {
             tag.putString("authority", authority.getValue());

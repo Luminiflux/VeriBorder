@@ -52,7 +52,8 @@ public class EndorsementScreen extends VeriScreen {
     private final boolean lockIssueDate;
     private final String lockedIssueDate;
     private final boolean lockValidity;
-    private final int lockedValidityYears;
+    /** 26.2 month precision: locked endorsement validity in months (0 = permanent). */
+    private final int lockedValidityMonths;
     private final List<CompoundTag> templates = new ArrayList<>();
     private int templateIndex;
     private EndorsementType type;
@@ -89,7 +90,10 @@ public class EndorsementScreen extends VeriScreen {
         this.lockedIssueDate = issueDate;
         this.lockIssueDate = payload.getBoolean("lockIssueDate") && DateUtil.isValid(issueDate);
         this.lockValidity = payload.getBoolean("lockValidity");
-        this.lockedValidityYears = payload.getInt("lockedValidityYears");
+        // 26.2 month precision: months win, a legacy year value is migrated x12.
+        this.lockedValidityMonths = payload.contains("lockedValidityMonths")
+                ? Math.max(0, payload.getInt("lockedValidityMonths"))
+                : Math.max(0, payload.getInt("lockedValidityYears") * 12);
         this.type = lockEndorsementType ? lockedEndorsementType : EndorsementType.ONE_YEAR_MULTI;
         ListTag list = payload.getList("presets", Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
@@ -291,14 +295,13 @@ public class EndorsementScreen extends VeriScreen {
     }
 
     private String autoExpiry(String issueDate) {
-        return lockedValidityYears <= 0 ? DateUtil.PERMANENT
-                : DateUtil.plusYears(issueDate, lockedValidityYears);
+        return lockedValidityMonths <= 0 ? DateUtil.PERMANENT
+                : DateUtil.plusMonths(issueDate, lockedValidityMonths);
     }
 
-    private String validityYearsText() {
-        return lockedValidityYears <= 0
-                ? Component.translatable("date.veriborder.permanent").getString()
-                : Component.translatable("screen.veriborder.years", lockedValidityYears).getString();
+    /** Locked validity as human text (26.2: month precision, years collapsed). */
+    private String validityText() {
+        return Ui.validityText(lockedValidityMonths);
     }
 
     private String expiryFor(String issueDate) {
@@ -459,7 +462,7 @@ public class EndorsementScreen extends VeriScreen {
                 top + 70, 274, Ui.MUTED);
         if (lockValidity) {
             Ui.clipped(graphics, Component.translatable("screen.veriborder.lock.validity_line",
-                            validityYearsText(), expiry == null ? "" : expiry.getValue()),
+                            validityText(), expiry == null ? "" : expiry.getValue()),
                     left + 222, top + 226, 274, Ui.AMBER);
         }
         if (codeError.isBlank()) {
@@ -504,7 +507,7 @@ public class EndorsementScreen extends VeriScreen {
         if (lockValidity) {
             String issueValue = lockIssueDate ? lockedIssueDate : DateUtil.today();
             Ui.clipped(graphics, Component.translatable("screen.veriborder.lock.validity_line",
-                            validityYearsText(), autoExpiry(issueValue)),
+                            validityText(), autoExpiry(issueValue)),
                     left + 222, top + 224, 274, Ui.AMBER);
         }
         Ui.clipped(graphics, Component.translatable("screen.veriborder.endorsement.self_code"),

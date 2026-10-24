@@ -315,6 +315,26 @@ public final class Ui {
     }
 
     /**
+     * 26.2 month-precision validity text. 0 (or less) is "permanent"; whole
+     * twelves collapse into years, so 3 -> "3 months", 12 -> "1 year",
+     * 15 -> "1 year 3 months", 24 -> "2 years".
+     */
+    public static String validityText(int months) {
+        if (months <= 0) {
+            return Component.translatable("date.veriborder.permanent").getString();
+        }
+        int years = months / 12;
+        int rest = months % 12;
+        if (years <= 0) {
+            return Component.translatable("duration.veriborder.months", rest).getString();
+        }
+        if (rest == 0) {
+            return Component.translatable("duration.veriborder.years", years).getString();
+        }
+        return Component.translatable("duration.veriborder.years_months", years, rest).getString();
+    }
+
+    /**
      * New 26.3 UI strings are shared with the language owners: the code ships a
      * readable English fallback and automatically switches to the translation as
      * soon as the key exists in {@code lang/*.json}, so no screen blocks on a

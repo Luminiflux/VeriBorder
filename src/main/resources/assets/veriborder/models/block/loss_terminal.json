@@ -375,15 +375,6 @@
           ],
           "texture": "#silver"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver"
-        },
         "east": {
           "uv": [
             0,
@@ -443,15 +434,6 @@
           ],
           "texture": "#silver"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver"
-        },
         "east": {
           "uv": [
             0,
@@ -503,15 +485,6 @@
       ],
       "faces": {
         "north": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver"
-        },
-        "south": {
           "uv": [
             0,
             0,
@@ -647,15 +620,6 @@
           ],
           "texture": "#dark"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
-        },
         "east": {
           "uv": [
             0,
@@ -715,15 +679,6 @@
           ],
           "texture": "#silver"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
-        },
         "east": {
           "uv": [
             0,
@@ -782,15 +737,6 @@
             16
           ],
           "texture": "#silver"
-        },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
         },
         "east": {
           "uv": [
@@ -919,15 +865,6 @@
           ],
           "texture": "#label"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
-        },
         "east": {
           "uv": [
             0,
@@ -986,15 +923,6 @@
             16
           ],
           "texture": "#led_green"
-        },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
         },
         "east": {
           "uv": [
@@ -1055,15 +983,6 @@
           ],
           "texture": "#glass"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
-        },
         "east": {
           "uv": [
             0,
@@ -1090,74 +1009,6 @@
             16
           ],
           "texture": "#glass"
-        },
-        "down": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
-        }
-      }
-    },
-    {
-      "from": [
-        2.95,
-        0.15,
-        2.9
-      ],
-      "to": [
-        13.05,
-        0.9,
-        3
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver_dark"
-        },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
-        },
-        "east": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver_dark"
-        },
-        "west": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver_dark"
-        },
-        "up": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
         },
         "down": {
           "uv": [
@@ -1201,15 +1052,6 @@
           "texture": "#shell"
         },
         "east": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#dark"
-        },
-        "west": {
           "uv": [
             0,
             0,

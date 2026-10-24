@@ -86,15 +86,17 @@ class VisaLockTest {
                 false, "", false, "", false, "", false, "", false, "", false, 0,
                 false, "", false, "", false, "",
                 true, false, true, 3, true, " Schengen ", true, " 2024-05-06 ",
-                true, 2, true, " Business ");
+                true, 24, true, " Business ");
         CompoundTag tag = new CompoundTag();
         configured.writeTo(tag);
         for (String key : List.of("lockIncludeVisa", "lockedIncludeVisa", "lockVisaEntries",
                 "lockedVisaEntries", "lockVisaCountry", "lockedVisaCountry", "lockVisaIssueDate",
-                "lockedVisaIssueDate", "lockVisaValidity", "lockedVisaValidityYears",
+                "lockedVisaIssueDate", "lockVisaValidity", "lockedVisaValidityMonths",
                 "lockVisaName", "lockedVisaName")) {
             assertTrue(tag.contains(key), "NBT key " + key);
         }
+        // 26.2 keeps the legacy year key in sync for older readers (24 months = 2).
+        assertEquals(2, tag.getInt("lockedVisaValidityYears"));
 
         DeviceBlockEntity.Locks loaded = DeviceBlockEntity.Locks.fromTag(tag);
         assertEquals(configured, loaded);
@@ -103,7 +105,7 @@ class VisaLockTest {
         assertEquals(3, loaded.lockedVisaEntries());
         assertEquals("Schengen", loaded.lockedVisaCountry());
         assertEquals("2024-05-06", loaded.lockedVisaIssueDate());
-        assertEquals(2, loaded.lockedVisaValidityYears());
+        assertEquals(24, loaded.lockedVisaValidityMonths());
         assertEquals("Business", loaded.lockedVisaName());
 
         // Pre-26.1 NBT loads neutral defaults and never turns a lock on.
@@ -130,7 +132,7 @@ class VisaLockTest {
     void attachedVisaLocksOverrideAForgedForm() {
         DocumentData passport = passport("2024-01-15", "2034-01-15");
         String lockedIssue = DateUtil.plusYears(DateUtil.today(), -1);
-        String lockedExpiry = DocumentFactory.lockedExpiry(lockedIssue, 2);
+        String lockedExpiry = DocumentFactory.lockedExpiry(lockedIssue, 24);
         DeviceBlockEntity.Locks locked = locks(tag -> {
             tag.putBoolean("lockIncludeVisa", true);
             tag.putBoolean("lockedIncludeVisa", true);
@@ -141,7 +143,7 @@ class VisaLockTest {
             tag.putBoolean("lockVisaIssueDate", true);
             tag.putString("lockedVisaIssueDate", lockedIssue);
             tag.putBoolean("lockVisaValidity", true);
-            tag.putInt("lockedVisaValidityYears", 2);
+            tag.putInt("lockedVisaValidityMonths", 24);
             tag.putBoolean("lockVisaName", true);
             tag.putString("lockedVisaName", "Business");
             tag.putBoolean("lockVisaCode", true);
@@ -243,7 +245,7 @@ class VisaLockTest {
         DocumentData dated = passport("2024-01-15", "2034-01-15");
         CompoundTag permanent = DeviceService.buildPassportVisa(locks(tag -> {
             tag.putBoolean("lockVisaValidity", true);
-            tag.putInt("lockedVisaValidityYears", 0);
+            tag.putInt("lockedVisaValidityMonths", 0);
         }), dated, form, "China");
         assertNotNull(permanent);
         assertEquals(DateUtil.PERMANENT, permanent.getString("expiryDate"));
@@ -337,6 +339,7 @@ class VisaLockTest {
             tag.putBoolean("lockIssueDate", true);
             tag.putString("lockedIssueDate", "2024-02-29");
             tag.putBoolean("lockValidity", true);
+            // Legacy year key: 26.2 migrates it to 60 months on read.
             tag.putInt("lockedValidityYears", 5);
         });
         CompoundTag visa = DeviceService.toVisa(DeviceService.applyVisaLocks(locked, form),
@@ -345,7 +348,7 @@ class VisaLockTest {
         assertEquals("Schengen", visa.getString("country"));
         assertEquals("2024-02-29", visa.getString("issueDate"));
         assertEquals("2029-02-28", visa.getString("expiryDate"),
-                "locked validity replaces the submitted expiry, leap day clamped");
+                "a legacy 5-year lock becomes 60 months, leap day clamped");
         assertEquals("00112233", visa.getString("code"));
     }
 
@@ -392,9 +395,9 @@ class VisaLockTest {
         assertEquals("2024-02-29", doc.issueDate());
         // DeviceService#issueDocument recomputes the locked expiry after the date
         // was forced, so the validity follows the locked (not the submitted) date.
-        doc.setExpiryDate(DocumentFactory.lockedExpiry(doc.issueDate(), 10));
+        doc.setExpiryDate(DocumentFactory.lockedExpiry(doc.issueDate(), 120));
         assertEquals("2034-02-28", doc.expiryDate(),
-                "locked validity is recomputed from the forced issue date (leap day clamped)");
+                "a 120-month (10-year) lock is recomputed from the forced issue date (leap day clamped)");
     }
 
     @Test

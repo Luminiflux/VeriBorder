@@ -142,12 +142,12 @@ public class DeviceConfigScreen extends VeriScreen {
     private EditBox lockedEndorsementCodeField;
     private EditBox lockedPlaceField;
     private EditBox lockedIssueDateField;
-    private EditBox lockedValidityYearsField;
+    private EditBox lockedValidityMonthsField;
     private EditBox lockedVisaCodeField;
     private EditBox lockedVisaEntriesField;
     private EditBox lockedVisaCountryField;
     private EditBox lockedVisaIssueDateField;
-    private EditBox lockedVisaValidityYearsField;
+    private EditBox lockedVisaValidityMonthsField;
     private EditBox lockedVisaNameField;
     private EditBox overstayDaysField;
     private EditBox issuerCountryField;
@@ -213,9 +213,11 @@ public class DeviceConfigScreen extends VeriScreen {
     private String lockedStyleTemplate = "";
     private VisaType lockedVisaType = VisaType.TOURIST;
     private EndorsementType lockedEndorsementType = EndorsementType.ONE_YEAR_MULTI;
-    private int lockedValidityYears;
+    /** 26.2 month precision: locked document validity in months (0 = permanent). */
+    private int lockedValidityMonths;
     private int lockedVisaEntries = 1;
-    private int lockedVisaValidityYears = 1;
+    /** 26.2 month precision: locked attached-visa validity in months (0 = permanent). */
+    private int lockedVisaValidityMonths = 12;
     private int overstayDays = DeviceBlockEntity.DEFAULT_OVERSTAY_DAYS;
 
     /**
@@ -287,8 +289,14 @@ public class DeviceConfigScreen extends VeriScreen {
         // "today", so the lock itself is what matters, not the stored value.
         this.lockIssueDate = payload.getBoolean("lockIssueDate");
         this.lockValidity = payload.getBoolean("lockValidity");
-        this.lockedValidityYears = payload.contains("lockedValidityYears")
-                ? payload.getInt("lockedValidityYears") : defaultValidityYears();
+        // 26.2 month precision: the stored month key wins; a legacy year value
+        // (older NBT) is migrated x12, and an unset lock starts from the layout's
+        // own validity (all layouts declare years).
+        this.lockedValidityMonths = payload.contains("lockedValidityMonths")
+                ? Math.max(0, payload.getInt("lockedValidityMonths"))
+                : payload.contains("lockedValidityYears")
+                ? Math.max(0, payload.getInt("lockedValidityYears") * 12)
+                : defaultValidityMonths();
         VisaType resolvedVisaType = resolveVisaType(payload.getString("lockedVisaType"));
         this.lockedVisaType = resolvedVisaType == null ? VisaType.TOURIST : resolvedVisaType;
         this.lockVisaType = payload.getBoolean("lockVisaType") && resolvedVisaType != null;
@@ -297,8 +305,12 @@ public class DeviceConfigScreen extends VeriScreen {
                 && ScreenCodes.isValid(visaCode);
         EndorsementType resolvedEndorsementType =
                 resolveEndorsementType(payload.getString("lockedEndorsementType"));
+        // 26.2: a permit issuer's unset initial-endorsement type is the built-in
+        // three-month single-entry endorsement, so the dropdown shows the value
+        // the machine actually issues.
         this.lockedEndorsementType = resolvedEndorsementType == null
-                ? EndorsementType.ONE_YEAR_MULTI : resolvedEndorsementType;
+                ? (permitIssuer ? EndorsementType.THREE_MONTH_SINGLE : EndorsementType.ONE_YEAR_MULTI)
+                : resolvedEndorsementType;
         this.lockEndorsementType = payload.getBoolean("lockEndorsementType")
                 && resolvedEndorsementType != null;
 
@@ -313,8 +325,11 @@ public class DeviceConfigScreen extends VeriScreen {
         String visaIssue = payload.getString("lockedVisaIssueDate").trim();
         this.lockVisaIssueDate = payload.getBoolean("lockVisaIssueDate") && DateUtil.isValid(visaIssue);
         this.lockVisaValidity = payload.getBoolean("lockVisaValidity");
-        this.lockedVisaValidityYears = payload.contains("lockedVisaValidityYears")
-                ? payload.getInt("lockedVisaValidityYears") : 1;
+        this.lockedVisaValidityMonths = payload.contains("lockedVisaValidityMonths")
+                ? Math.max(0, payload.getInt("lockedVisaValidityMonths"))
+                : payload.contains("lockedVisaValidityYears")
+                ? Math.max(0, payload.getInt("lockedVisaValidityYears") * 12)
+                : 12;
         this.lockVisaName = payload.getBoolean("lockVisaName");
 
         // 26.2 issuer policy. These fields are ignored by non-issuer screens, so
@@ -663,8 +678,23 @@ public class DeviceConfigScreen extends VeriScreen {
         }
 
         if (permitIssuer) {
+            // 26.2: the permit's built-in endorsement. The administrator picks the
+            // type from the endorsement table and may lock it, so this machine
+            // always issues permits carrying that exact endorsement.
             int ix = lockColumnX(index);
             int iy = lockRowY(index);
+            index++;
+            addLockToggle(ix, iy, this::lockEndorsementTypeLabel,
+                    () -> lockEndorsementType = !lockEndorsementType);
+            addDropdown(Dropdown.at(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth())
+                    .height(16)
+                    .options(endorsementTypeOptions())
+                    .selected(lockedEndorsementType.id())
+                    .tooltip(lockEndorsementTypeLabel())
+                    .onChange(id -> lockedEndorsementType = EndorsementType.byId(id)));
+
+            ix = lockColumnX(index);
+            iy = lockRowY(index);
             index++;
             addLockToggle(ix, iy, this::lockEndorsementCodeLabel, () -> lockEndorsementCode = !lockEndorsementCode);
             lockedEndorsementCodeField = addField(ix, iy + LOCK_VALUE_OFFSET, lockColumnWidth(),
@@ -723,12 +753,12 @@ public class DeviceConfigScreen extends VeriScreen {
         putValue(draft, "lockedEndorsementCode", lockedEndorsementCodeField);
         putValue(draft, "lockedPlace", lockedPlaceField);
         putValue(draft, "lockedIssueDate", lockedIssueDateField);
-        putValue(draft, "lockedValidityYears", lockedValidityYearsField);
+        putValue(draft, "lockedValidityMonths", lockedValidityMonthsField);
         putValue(draft, "lockedVisaCode", lockedVisaCodeField);
         putValue(draft, "lockedVisaEntries", lockedVisaEntriesField);
         putValue(draft, "lockedVisaCountry", lockedVisaCountryField);
         putValue(draft, "lockedVisaIssueDate", lockedVisaIssueDateField);
-        putValue(draft, "lockedVisaValidityYears", lockedVisaValidityYearsField);
+        putValue(draft, "lockedVisaValidityMonths", lockedVisaValidityMonthsField);
         putValue(draft, "lockedVisaName", lockedVisaNameField);
         putValue(draft, "overstayDays", overstayDaysField);
         capturePolicyFields();
@@ -983,7 +1013,7 @@ public class DeviceConfigScreen extends VeriScreen {
         iy = lockRowY(index);
         index++;
         addLockToggle(ix, iy, this::lockValidityLabel, () -> lockValidity = !lockValidity);
-        lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+        lockedValidityMonthsField = addValidityMonthsField(ix, iy + LOCK_VALUE_OFFSET);
 
         if (passportIssuer) {
             ix = lockColumnX(index);
@@ -1050,7 +1080,7 @@ public class DeviceConfigScreen extends VeriScreen {
         iy = lockRowY(index);
         index++;
         addLockToggle(ix, iy, this::lockVisaValidityLabel, () -> lockVisaValidity = !lockVisaValidity);
-        lockedVisaValidityYearsField = addVisaValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+        lockedVisaValidityMonthsField = addVisaValidityMonthsField(ix, iy + LOCK_VALUE_OFFSET);
 
         ix = lockColumnX(index);
         iy = lockRowY(index);
@@ -1103,7 +1133,7 @@ public class DeviceConfigScreen extends VeriScreen {
         iy = lockRowY(index);
         index++;
         addLockToggle(ix, iy, this::lockValidityLabel, () -> lockValidity = !lockValidity);
-        lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+        lockedValidityMonthsField = addValidityMonthsField(ix, iy + LOCK_VALUE_OFFSET);
 
         ix = lockColumnX(index);
         iy = lockRowY(index);
@@ -1143,7 +1173,7 @@ public class DeviceConfigScreen extends VeriScreen {
         iy = lockRowY(index);
         index++;
         addLockToggle(ix, iy, this::lockValidityLabel, () -> lockValidity = !lockValidity);
-        lockedValidityYearsField = addValidityYearsField(ix, iy + LOCK_VALUE_OFFSET);
+        lockedValidityMonthsField = addValidityMonthsField(ix, iy + LOCK_VALUE_OFFSET);
         return index;
     }
 
@@ -1195,23 +1225,27 @@ public class DeviceConfigScreen extends VeriScreen {
         return options;
     }
 
-    private EditBox addValidityYearsField(int x, int y) {
+    /**
+     * 26.2 month precision: validity is entered in MONTHS (0 = permanent). The
+     * live "= 1 year 3 months" equivalent is painted by {@link #renderLocksTab}.
+     */
+    private EditBox addValidityMonthsField(int x, int y) {
         EditBox field = addField(x, y, lockColumnWidth(), "field.veriborder.locked_validity",
-                valueFor("lockedValidityYears", String.valueOf(lockedValidityYears)),
+                valueFor("lockedValidityMonths", String.valueOf(lockedValidityMonths)),
                 "hint.veriborder.zero_permanent");
-        field.setMaxLength(3);
+        field.setMaxLength(4);
         field.setFilter(value -> value.isEmpty()
-                || (value.length() <= 3 && value.chars().allMatch(c -> c >= '0' && c <= '9')));
+                || (value.length() <= 4 && value.chars().allMatch(c -> c >= '0' && c <= '9')));
         return field;
     }
 
-    private EditBox addVisaValidityYearsField(int x, int y) {
+    private EditBox addVisaValidityMonthsField(int x, int y) {
         EditBox field = addField(x, y, lockColumnWidth(), "field.veriborder.locked_visa_validity",
-                valueFor("lockedVisaValidityYears", String.valueOf(lockedVisaValidityYears)),
+                valueFor("lockedVisaValidityMonths", String.valueOf(lockedVisaValidityMonths)),
                 "hint.veriborder.zero_permanent");
-        field.setMaxLength(3);
+        field.setMaxLength(4);
         field.setFilter(value -> value.isEmpty()
-                || (value.length() <= 3 && value.chars().allMatch(c -> c >= '0' && c <= '9')));
+                || (value.length() <= 4 && value.chars().allMatch(c -> c >= '0' && c <= '9')));
         return field;
     }
 
@@ -1244,7 +1278,7 @@ public class DeviceConfigScreen extends VeriScreen {
 
     private int lockItemCount() {
         if (documentIssuer) {
-            return 4 + (passportIssuer ? 2 : 0) + (permitIssuer ? 1 : 0)
+            return 4 + (passportIssuer ? 2 : 0) + (permitIssuer ? 2 : 0)
                     + (passportIssuer ? 6 : 0);
         }
         if (visaIssuer) {
@@ -1256,11 +1290,12 @@ public class DeviceConfigScreen extends VeriScreen {
         return 0;
     }
 
-    private int defaultValidityYears() {
+    /** Default locked validity in months: the layout's own validity (declared in years). */
+    private int defaultValidityMonths() {
         if (documentIssuer && lockedStyle != null) {
-            return lockedStyle.validityYears();
+            return lockedStyle.validityYears() * 12;
         }
-        return visaIssuer || endorsementIssuer ? 1 : 0;
+        return visaIssuer || endorsementIssuer ? 12 : 0;
     }
 
     private static String defaultIssueDate(String value) {
@@ -1596,14 +1631,20 @@ public class DeviceConfigScreen extends VeriScreen {
             data.putBoolean("lockIssueDate", lockIssueDate);
             data.putString("lockedIssueDate", value("lockedIssueDate").trim());
             data.putBoolean("lockValidity", lockValidity);
-            data.putInt("lockedValidityYears", validityYears());
+            // 26.2 month precision: months are the stored contract; the legacy
+            // year key (floor) keeps an older reader usable and never rounds up.
+            int validityMonths = validityMonths();
+            data.putInt("lockedValidityMonths", validityMonths);
+            data.putInt("lockedValidityYears", validityMonths / 12);
             if (visaIssuer || passportIssuer) {
                 data.putBoolean("lockVisaType", lockVisaType);
                 data.putString("lockedVisaType", lockedVisaType.id());
                 data.putBoolean("lockVisaCode", lockVisaCode);
                 data.putString("lockedVisaCode", ScreenCodes.validOrBlank(value("lockedVisaCode")));
             }
-            if (endorsementIssuer) {
+            if (endorsementIssuer || permitIssuer) {
+                // 26.2: a permit issuer uses the same fields for the type of the
+                // built-in endorsement it attaches to every new permit.
                 data.putBoolean("lockEndorsementType", lockEndorsementType);
                 data.putString("lockedEndorsementType", lockedEndorsementType.id());
             }
@@ -1614,7 +1655,7 @@ public class DeviceConfigScreen extends VeriScreen {
             }
             if (passportIssuer) {
                 // 26.1 attached-visa locks. Keys follow the DeviceBlockEntity
-                // contract exactly (lockedVisaValidityYears for lockVisaValidity).
+                // contract exactly (lockedVisaValidityMonths for lockVisaValidity).
                 data.putBoolean("lockIncludeVisa", lockIncludeVisa);
                 data.putBoolean("lockedIncludeVisa", includeVisaLocked);
                 data.putBoolean("lockVisaEntries", lockVisaEntries);
@@ -1624,7 +1665,9 @@ public class DeviceConfigScreen extends VeriScreen {
                 data.putBoolean("lockVisaIssueDate", lockVisaIssueDate);
                 data.putString("lockedVisaIssueDate", value("lockedVisaIssueDate").trim());
                 data.putBoolean("lockVisaValidity", lockVisaValidity);
-                data.putInt("lockedVisaValidityYears", visaValidityYears());
+                int visaValidityMonths = visaValidityMonths();
+                data.putInt("lockedVisaValidityMonths", visaValidityMonths);
+                data.putInt("lockedVisaValidityYears", visaValidityMonths / 12);
                 data.putBoolean("lockVisaName", lockVisaName);
                 data.putString("lockedVisaName", value("lockedVisaName").trim());
             } else if (visaIssuer) {
@@ -1636,12 +1679,16 @@ public class DeviceConfigScreen extends VeriScreen {
         onClose();
     }
 
-    private int validityYears() {
-        return Math.max(0, parseInt(value("lockedValidityYears"), 0));
+    /** Locked document validity in months (0 = permanent), clamped like the device. */
+    private int validityMonths() {
+        return DeviceBlockEntity.clampValidityMonths(parseInt(value("lockedValidityMonths"),
+                lockedValidityMonths));
     }
 
-    private int visaValidityYears() {
-        return Math.max(0, parseInt(value("lockedVisaValidityYears"), 0));
+    /** Locked attached-visa validity in months (0 = permanent). */
+    private int visaValidityMonths() {
+        return DeviceBlockEntity.clampValidityMonths(parseInt(
+                value("lockedVisaValidityMonths"), lockedVisaValidityMonths));
     }
 
     private int lockedVisaEntries() {
@@ -1918,6 +1965,36 @@ public class DeviceConfigScreen extends VeriScreen {
     private void renderLocksTab(GuiGraphics graphics, int hintY) {
         Ui.clipped(graphics, Component.translatable("screen.veriborder.config.lock_hint"),
                 left + 24, hintY, 392, Ui.DIM);
+        // 26.2 month precision: the months field is authoritative, but the
+        // operator sees the human equivalent live while typing ("= 1 year 3 months").
+        int y = top + imageHeight - 70;
+        if (lockedValidityMonthsField != null) {
+            int months = liveMonths(lockedValidityMonthsField, validityMonths());
+            Ui.clipped(graphics, validityEquivalent(months), left + 24, y, 392, Ui.CYAN);
+            y += 14;
+        }
+        if (lockedVisaValidityMonthsField != null) {
+            int months = liveMonths(lockedVisaValidityMonthsField, visaValidityMonths());
+            Ui.clipped(graphics, validityEquivalent(months), left + 24, y, 392, Ui.CYAN);
+        }
+    }
+
+    /**
+     * Month count plus its collapsed year form ("15 months = 1 year 3 months");
+     * below a year (and for "permanent") the plain text is enough.
+     */
+    private static Component validityEquivalent(int months) {
+        if (months < 12) {
+            return Component.literal(Ui.validityText(months));
+        }
+        return Component.translatable("hint.veriborder.months_equivalent",
+                months, Ui.validityText(months));
+    }
+
+    /** Live month count of a validity field (the text being typed, clamped). */
+    private static int liveMonths(EditBox field, int fallback) {
+        return DeviceBlockEntity.clampValidityMonths(parseInt(
+                field == null ? "" : field.getValue(), fallback));
     }
 
     private static String normalizeMode(String value) {

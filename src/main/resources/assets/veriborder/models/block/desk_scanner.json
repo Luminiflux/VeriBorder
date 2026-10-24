@@ -171,15 +171,6 @@
           ],
           "texture": "#dark"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
-        },
         "east": {
           "uv": [
             0,
@@ -274,15 +265,6 @@
             16
           ],
           "texture": "#dark"
-        },
-        "down": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#dark"
         }
       }
     },
@@ -335,15 +317,6 @@
           "texture": "#glass"
         },
         "up": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#glass"
-        },
-        "down": {
           "uv": [
             0,
             0,
@@ -647,15 +620,6 @@
           ],
           "texture": "#silver"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver"
-        },
         "east": {
           "uv": [
             0,
@@ -707,15 +671,6 @@
       ],
       "faces": {
         "north": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver"
-        },
-        "south": {
           "uv": [
             0,
             0,
@@ -783,15 +738,6 @@
           ],
           "texture": "#silver"
         },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver"
-        },
         "east": {
           "uv": [
             0,
@@ -843,15 +789,6 @@
       ],
       "faces": {
         "north": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver"
-        },
-        "south": {
           "uv": [
             0,
             0,
@@ -986,15 +923,6 @@
             16
           ],
           "texture": "#label"
-        },
-        "south": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell"
         },
         "east": {
           "uv": [

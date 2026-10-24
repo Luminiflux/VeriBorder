@@ -88,8 +88,33 @@ function New-BitmapSmooth([int]$w, [int]$h) {
     $g.Clear([System.Drawing.Color]::Transparent)
     return @($bmp, $g)
 }
+# Item icons must be BINARY in alpha. Iris/OptiFine treat any 0 < alpha < 255 as
+# a translucent draw: an anti-aliased icon edge then blends with whatever sits
+# behind it (light bleed / halos at the silhouette) and drops the whole icon into
+# the sorted translucent pass, which is what makes items look see-through under
+# shaders. GDI+ anti-aliasing leaves exactly those feathered edges, so every
+# texture written below textures\item is flattened on save:
+#   alpha <  128 -> fully transparent (0)
+#   alpha >= 128 -> fully opaque     (255)
+# RGB is kept as drawn (the card/icon art uses straight alpha, so no dark halo).
+# Block textures are deliberately untouched: glass/leaf/tablet are designed
+# translucent and their render layer is chosen by the block, not by the texture.
+function Set-HardAlpha([System.Drawing.Bitmap]$bmp) {
+    $flat = [System.Drawing.Bitmap]::new($bmp.Width, $bmp.Height, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    for ($y = 0; $y -lt $bmp.Height; $y++) {
+        for ($x = 0; $x -lt $bmp.Width; $x++) {
+            $p = $bmp.GetPixel($x, $y)
+            if ($p.A -eq 0 -or $p.A -eq 255) { $flat.SetPixel($x, $y, $p); continue }
+            $a = if ($p.A -ge 128) { 255 } else { 0 }
+            $flat.SetPixel($x, $y, [System.Drawing.Color]::FromArgb($a, $p.R, $p.G, $p.B))
+        }
+    }
+    $bmp.Dispose()
+    return $flat
+}
 function Save-Bitmap($bmp, $g, [string]$path) {
     $g.Dispose()
+    if ($path -like '*\textures\item\*') { $bmp = Set-HardAlpha $bmp }
     $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
 }
@@ -219,6 +244,10 @@ foreach ($d in $devices) {
         # transforms than the 16 px machines or it clips the inventory slot
         Write-Json (Join-Path $itemModels "$($d.id).json") ([ordered]@{
             parent = "veriborder:block/$($d.id)"
+            # a block model defaults to gui_light "side"; the item form wants the
+            # head-on GUI lighting vanilla item models use, otherwise the front
+            # faces go dark and the shading steps read as internal faces
+            gui_light = 'front'
             display = [ordered]@{
                 thirdperson_righthand = [ordered]@{ rotation = @(75, 45, 0); translation = @(0, 2.5, 0); scale = @(0.2, 0.2, 0.2) }
                 thirdperson_lefthand = [ordered]@{ rotation = @(75, 45, 0); translation = @(0, 2.5, 0); scale = @(0.2, 0.2, 0.2) }
@@ -230,7 +259,7 @@ foreach ($d in $devices) {
             }
         })
     } else {
-        Write-Json (Join-Path $itemModels "$($d.id).json") ([ordered]@{ parent = "veriborder:block/$($d.id)" })
+        Write-Json (Join-Path $itemModels "$($d.id).json") ([ordered]@{ parent = "veriborder:block/$($d.id)"; gui_light = 'front' })
     }
     Write-Json (Join-Path $loot "$($d.id).json") ([ordered]@{
         type = 'minecraft:block'

@@ -1,5 +1,6 @@
 {
     "parent":  "veriborder:block/egate",
+    "gui_light":  "front",
     "display":  {
                     "thirdperson_righthand":  {
                                                   "rotation":  [

@@ -1,3 +1,4 @@
 {
-    "parent":  "veriborder:block/airport_checkin"
+    "parent":  "veriborder:block/airport_checkin",
+    "gui_light":  "front"
 }

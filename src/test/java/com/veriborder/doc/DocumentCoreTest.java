@@ -868,7 +868,7 @@ class DocumentCoreTest {
                 true, "  cn_passport ",
                 true, "  Shanghai ",
                 true, " 2024-02-29 ",
-                true, 5,
+                true, 60,
                 true, "  business ",
                 true, " 00112233 ",
                 true, "  one_year_multi ");
@@ -882,7 +882,8 @@ class DocumentCoreTest {
         assertEquals("cn_passport", loaded.lockedStyle());
         assertEquals("Shanghai", loaded.lockedPlace());
         assertEquals("2024-02-29", loaded.lockedIssueDate());
-        assertEquals(5, loaded.lockedValidityYears());
+        // 26.2 month precision: 5 years are stored as 60 months.
+        assertEquals(60, loaded.lockedValidityMonths());
         assertEquals("business", loaded.lockedVisaType());
         assertEquals("00112233", loaded.lockedVisaCode());
         assertEquals("one_year_multi", loaded.lockedEndorsementType());
@@ -902,7 +903,7 @@ class DocumentCoreTest {
         assertFalse(legacy.lockPlace());
         assertFalse(legacy.lockIssueDate());
         assertFalse(legacy.lockValidity());
-        assertEquals(0, legacy.lockedValidityYears());
+        assertEquals(0, legacy.lockedValidityMonths());
         assertFalse(legacy.lockVisaType());
         assertFalse(legacy.lockVisaCode());
         assertFalse(legacy.lockEndorsementType());
@@ -918,14 +919,15 @@ class DocumentCoreTest {
     }
 
     @Test
-    void lockedValidityMathTreatsZeroAsPermanentAndPositiveAsYears() {
+    void lockedValidityMathTreatsZeroAsPermanentAndPositiveAsMonths() {
         assertEquals(DateUtil.PERMANENT, DocumentFactory.lockedExpiry("2024-03-01", 0));
         assertEquals(DateUtil.PERMANENT, DocumentFactory.lockedExpiry("2024-03-01", -3));
-        assertEquals("2029-03-01", DocumentFactory.lockedExpiry("2024-03-01", 5));
-        assertEquals("2025-02-28", DocumentFactory.lockedExpiry("2024-02-29", 1),
-                "leap-day issue dates clamp like LocalDate.plusYears");
-        assertEquals(DateUtil.plusYears(DateUtil.today(), 2),
-                DocumentFactory.lockedExpiry("not-a-date", 2),
+        assertEquals("2029-03-01", DocumentFactory.lockedExpiry("2024-03-01", 60),
+                "60 months are five calendar years");
+        assertEquals("2025-02-28", DocumentFactory.lockedExpiry("2024-02-29", 12),
+                "leap-day issue dates clamp like LocalDate.plusMonths");
+        assertEquals(DateUtil.plusMonths(DateUtil.today(), 24),
+                DocumentFactory.lockedExpiry("not-a-date", 24),
                 "an unusable issue date falls back to today");
     }
 

@@ -3,28 +3,28 @@ Rendered: isometric preview, orthographic, 512x512, textured quads.
 
 id                     els rot  colors  light  tex  bbox          cube  silhouette  shape-hash   KB
 ---------------------------------------------------------------------------------------------------
-airport_checkin        21   0     52     36   10  12.0x30.2x12.1 no         0.744  cda2abb14f94 24.6
-blacklist_terminal     20   0     52     34   10  10.0x22.4x10.0 no         0.807  e7624e8859c4 23.6
-desk_scanner           16   0     52     36   10  14.0x4.6x10.0  no         0.642  8ebf06a3de23 19.0
-dual_gate              24   0    118     23    9  21.0x18.0x16.4 no         0.470  43553c0dbf01 27.8
-egate                  24   0    120     26    9  21.0x18.0x16.4 no         0.470  43553c0dbf01 27.7
-endorsement_machine    23   0     51     35    9  13.0x13.2x13.8 no         0.653  da5dae417505 26.5
-entry_stamp            31   0     57     40   12  12.8x26.0x12.8 no         0.628  a1ff1ce15ed7 35.2
-exit_gate              24   0    122     25    8  21.0x18.0x16.4 no         0.470  35a20b36356e 27.7
-exit_stamp             31   0     57     40   12  12.6x27.0x12.6 no         0.567  af709adc9c3e 35.2
-hotel_reader           17   0     52     36   10  10.0x8.8x9.4   no         0.761  44ee89bd0197 20.0
-id_issuer              24   0     51     35    9  14.6x15.2x15.0 no         0.696  3a157f0d6a65 27.4
-loss_terminal          18   0     52     36   10  10.8x12.6x10.8 no         0.747  c2584dd479c3 21.1
-manual_terminal        17   0     52     36   10  10.0x18.4x10.4 no         0.768  cb556cfcecdd 20.4
-passport_issuer        23   0     52     36   10  13.6x29.1x13.6 no         0.719  4bb4d793be8b 26.7
-permit_issuer          22   0     73     35   10  14.4x15.4x14.4 no         0.710  525f75e510a3 25.4
-print_preview          23   0     54     38   11  11.6x19.5x12.8 no         0.763  8a1939146814 26.7
-renewal_machine        24   0     52     36   10  11.0x28.4x10.4 no         0.821  d9d63c5ccfaa 27.8
-self_endorsement       25   0     51     35    9  10.8x27.7x11.2 no         0.830  d94a21e7750d 28.9
-self_visa              20   0     52     36   10  10.8x29.4x10.8 no         0.845  447ef849ca88 23.6
-stamp_history          24   0     54     38   11  12.6x28.0x13.3 no         0.819  d1c89c152a1c 27.9
-station_verifier       21   3     52     36   10  11.6x25.0x11.4 no         0.709  985f3ca2224e 24.8
-visa_issuer            21   0     73     46   10  14.8x13.6x14.9 no         0.677  aafb186321ee 24.3
+airport_checkin        20   0     52     36   10  12.0x30.2x12.1 no         0.744  4535ce706be6 21.4
+blacklist_terminal     19   0     52     34   10  10.0x22.4x10.0 no         0.807  e9a533880037 21.2
+desk_scanner           16   0     52     36   10  14.0x4.6x10.0  no         0.642  8ebf06a3de23 17.8
+dual_gate              24   0    118     23    9  21.0x18.0x16.4 no         0.470  43553c0dbf01 26.9
+egate                  24   0    120     26    9  21.0x18.0x16.4 no         0.470  43553c0dbf01 26.8
+endorsement_machine    23   0     51     35    9  13.0x13.2x13.8 no         0.653  da5dae417505 25.1
+entry_stamp            31   0     57     40   12  12.8x26.0x12.8 no         0.628  a1ff1ce15ed7 34.5
+exit_gate              24   0    122     25    8  21.0x18.0x16.4 no         0.470  35a20b36356e 26.8
+exit_stamp             31   0     57     40   12  12.6x27.0x12.6 no         0.567  af709adc9c3e 34.8
+hotel_reader           17   0     52     36   10  10.0x8.8x9.4   no         0.761  44ee89bd0197 18.4
+id_issuer              24   0     51     35    9  14.6x15.2x15.0 no         0.696  3a157f0d6a65 24.9
+loss_terminal          17   0     52     36   10  10.8x12.6x10.8 no         0.747  f14734ca8a2f 18.5
+manual_terminal        17   0     52     36   10  10.0x18.4x10.4 no         0.768  cb556cfcecdd 19.4
+passport_issuer        23   0     52     36   10  13.6x29.1x13.6 no         0.719  4bb4d793be8b 24.9
+permit_issuer          22   0     73     35   10  14.4x15.4x14.4 no         0.710  525f75e510a3 22.4
+print_preview          23   0     54     38   11  11.6x19.5x12.8 no         0.763  8a1939146814 25.8
+renewal_machine        23   0     52     36   10  11.0x28.4x10.4 no         0.821  0b71931b92cc 24.9
+self_endorsement       25   0     51     35    9  10.8x27.7x11.2 no         0.830  d94a21e7750d 27.4
+self_visa              20   0     52     36   10  10.8x29.4x10.8 no         0.845  447ef849ca88 21.8
+stamp_history          24   0     54     38   11  12.6x28.0x13.3 no         0.819  d1c89c152a1c 27.1
+station_verifier       20   3     52     36   10  11.6x25.0x11.4 no         0.709  5b7523117100 22.4
+visa_issuer            21   0     73     46   10  14.8x13.6x14.9 no         0.677  aafb186321ee 22.7
 
 models: 22   blockstates: 23   variants: 101   textures on disk: 379
 min elements: 16   unique geometry hashes: 21

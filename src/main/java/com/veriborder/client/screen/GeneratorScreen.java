@@ -3,6 +3,7 @@ package com.veriborder.client.screen;
 import com.veriborder.client.BetterButton;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
+import com.veriborder.client.ui.BirthDatePicker;
 import com.veriborder.client.ui.ColorPalette;
 import com.veriborder.client.ui.Dropdown;
 import com.veriborder.doc.DateUtil;
@@ -35,7 +36,8 @@ public class GeneratorScreen extends VeriScreen {
     private EditBox name;
     private EditBox nameLatin;
     private EditBox number;
-    private EditBox birth;
+    /** 26.2: date of birth is three dropdowns (year / month / day), never typed. */
+    private BirthDatePicker birth;
     private EditBox nationality;
     private EditBox authority;
     private EditBox place;
@@ -179,8 +181,11 @@ public class GeneratorScreen extends VeriScreen {
                     capture();
                     rebuildWidgets();
                 }));
-        birth = addField(left + 24, top + 198, 214, "field.veriborder.birth", cache.getString("birthDate"),
-                "hint.veriborder.date");
+        // 26.2: the birthday is picked from three dropdowns (year / month / day)
+        // instead of a free-text field; the written value is unchanged.
+        birth = BirthDatePicker.at(left + 24, top + 198, cache.getString("birthDate"),
+                next -> cache.putString("birthDate", next.value()));
+        birth.register(this::addDropdown);
         nationality = addField(left + 266, top + 198, 230, "field.veriborder.nationality", cache.getString("nationality"));
         authority = addField(left + 24, top + 228, 214, "field.veriborder.issuer", cache.getString("authority"));
         place = addField(left + 266, top + 228, 230, "field.veriborder.place", cache.getString("placeOfIssue"));
@@ -207,7 +212,9 @@ public class GeneratorScreen extends VeriScreen {
         cache.putString("nameLatin", nameLatin.getValue());
         cache.putString("number", number.getValue());
         cache.putString("sex", sex);
-        cache.putString("birthDate", birth.getValue());
+        if (birth != null) {
+            cache.putString("birthDate", birth.value());
+        }
         cache.putString("nationality", nationality.getValue());
         cache.putString("authority", authority.getValue());
         cache.putString("placeOfIssue", place.getValue());

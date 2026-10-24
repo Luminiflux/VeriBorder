@@ -35,6 +35,8 @@ import java.util.function.Consumer;
  */
 public final class Dropdown {
     public static final int HEIGHT = 18;
+    /** Narrowest control the component draws (keeps the arrow and 2-3 chars). */
+    public static final int MIN_WIDTH = 36;
     /** Above this many options the panel grows a search row. */
     public static final int SEARCH_THRESHOLD = 8;
 
@@ -74,7 +76,7 @@ public final class Dropdown {
     private Dropdown(int x, int y, int width) {
         this.x = x;
         this.y = y;
-        this.width = Math.max(36, width);
+        this.width = Math.max(MIN_WIDTH, width);
     }
 
     public static Dropdown at(int x, int y, int width) {

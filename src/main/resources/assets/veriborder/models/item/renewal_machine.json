@@ -1,3 +1,4 @@
 {
-    "parent":  "veriborder:block/renewal_machine"
+    "parent":  "veriborder:block/renewal_machine",
+    "gui_light":  "front"
 }

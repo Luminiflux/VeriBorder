@@ -24,6 +24,31 @@ public final class DateUtil {
         return parsed.plusYears(Math.max(0, years)).format(ISO);
     }
 
+    /**
+     * 26.2 validity months: adds {@code months} calendar months to {@code date}
+     * (an unusable date falls back to today). Month arithmetic clamps to the end
+     * of the target month exactly like {@link LocalDate#plusMonths(long)}
+     * (2026-01-31 + 1 month = 2026-02-28, 2024-01-31 + 1 = 2024-02-29), so a
+     * three-month endorsement issued on the 31st never rolls into the next month.
+     */
+    public static String plusMonths(String date, int months) {
+        LocalDate parsed = parseOrNull(date);
+        if (parsed == null) {
+            parsed = LocalDate.now();
+        }
+        return parsed.plusMonths(Math.max(0, months)).format(ISO);
+    }
+
+    /** The number of whole years a month count represents (12 months = 1 year). */
+    public static int wholeYears(int months) {
+        return Math.max(0, months) / 12;
+    }
+
+    /** The month remainder after whole years (15 months = 1 year + 3). */
+    public static int remainingMonths(int months) {
+        return Math.max(0, months) % 12;
+    }
+
     public static String plusDays(String date, int days) {
         LocalDate parsed = parseOrNull(date);
         if (parsed == null) {

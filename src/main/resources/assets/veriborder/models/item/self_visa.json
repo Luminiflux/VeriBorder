@@ -1,3 +1,4 @@
 {
-    "parent":  "veriborder:block/self_visa"
+    "parent":  "veriborder:block/self_visa",
+    "gui_light":  "front"
 }

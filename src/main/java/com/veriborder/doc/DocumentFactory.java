@@ -331,12 +331,14 @@ public final class DocumentFactory {
     }
 
     /**
-     * Expiry implied by a locked validity period: zero or a negative number means
-     * permanent, otherwise the issue date plus that many years. An unusable issue
-     * date is handled by {@link DateUtil#plusYears(String, int)} (today).
+     * Expiry implied by a locked validity period in <b>months</b> (26.2 month
+     * precision): zero or a negative count means permanent, otherwise the issue
+     * date plus that many calendar months. An unusable issue date is handled by
+     * {@link DateUtil#plusMonths(String, int)} (today), and month-end dates clamp
+     * to the last day of the target month (2026-01-31 + 3 months = 2026-04-30).
      */
-    public static String lockedExpiry(String issueDate, int years) {
-        return years <= 0 ? DateUtil.PERMANENT : DateUtil.plusYears(issueDate, years);
+    public static String lockedExpiry(String issueDate, int months) {
+        return months <= 0 ? DateUtil.PERMANENT : DateUtil.plusMonths(issueDate, months);
     }
 
     /**
@@ -354,21 +356,21 @@ public final class DocumentFactory {
     /**
      * Attached visa with the 26.1 passport-visa overrides: an explicit issue date
      * (blank or unusable keeps the passport issue date), an optional locked
-     * validity period and a display label. When validity is locked, the expiry is
-     * derived from the visa issue date with {@link #lockedExpiry}; otherwise the
-     * passport expiry is inherited when it is a real (non-permanent) date and one
-     * year after issue is used otherwise.
+     * validity period in months and a display label. When validity is locked, the
+     * expiry is derived from the visa issue date with {@link #lockedExpiry};
+     * otherwise the passport expiry is inherited when it is a real (non-permanent)
+     * date and one year after issue is used otherwise.
      */
     public static CompoundTag createAttachedVisa(DocumentData passport, String country, VisaType type,
                                                  int entries, String authority, String code,
                                                  String label, String issueDate,
-                                                 boolean lockValidity, int validityYears) {
+                                                 boolean lockValidity, int validityMonths) {
         String issue = DateUtil.isValid(issueDate) ? issueDate.trim()
                 : DateUtil.isValid(passport.issueDate()) ? passport.issueDate().trim()
                 : DateUtil.today();
         String expiry;
         if (lockValidity) {
-            expiry = lockedExpiry(issue, validityYears);
+            expiry = lockedExpiry(issue, validityMonths);
         } else {
             String inherited = passport.expiryDate() == null ? "" : passport.expiryDate().trim();
             expiry = DateUtil.isValid(inherited) && !DateUtil.isPermanent(inherited)

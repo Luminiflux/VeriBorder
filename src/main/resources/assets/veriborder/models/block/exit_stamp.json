@@ -1363,15 +1363,6 @@
             16
           ],
           "texture": "#silver"
-        },
-        "down": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver"
         }
       }
     },
@@ -1499,15 +1490,6 @@
             16
           ],
           "texture": "#shell"
-        },
-        "down": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#shell2"
         }
       }
     },
@@ -1560,15 +1542,6 @@
           "texture": "#silver_flat"
         },
         "up": {
-          "uv": [
-            0,
-            0,
-            16,
-            16
-          ],
-          "texture": "#silver_flat"
-        },
-        "down": {
           "uv": [
             0,
             0,

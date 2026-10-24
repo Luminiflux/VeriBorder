@@ -1,3 +1,4 @@
 {
-    "parent":  "veriborder:block/passport_issuer"
+    "parent":  "veriborder:block/passport_issuer",
+    "gui_light":  "front"
 }

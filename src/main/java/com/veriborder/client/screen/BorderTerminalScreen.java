@@ -4,6 +4,7 @@ import com.veriborder.border.BorderTerminalService;
 import com.veriborder.client.BetterButton;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
+import com.veriborder.client.ui.BirthDatePicker;
 import com.veriborder.client.ui.Dropdown;
 import com.veriborder.client.ui.PagedList;
 import com.veriborder.client.ui.TabStrip;
@@ -179,7 +180,8 @@ public class BorderTerminalScreen extends VeriScreen {
     private EditBox docName;
     private EditBox docNameLatin;
     private EditBox docNumber;
-    private EditBox docBirth;
+    /** 26.2: date of birth is three dropdowns (year / month / day), never typed. */
+    private BirthDatePicker docBirth;
     private EditBox docNationality;
     private EditBox docAuthority;
     private EditBox docPlace;
@@ -632,7 +634,10 @@ public class BorderTerminalScreen extends VeriScreen {
         docName = addField(x1, 82, w, "field.veriborder.name", doc.name());
         docNameLatin = addField(x2, 82, w, "field.veriborder.name_latin", doc.nameLatin());
         docNumber = addField(x1, 124, w, "field.veriborder.number", doc.number());
-        docBirth = addField(x2, 124, w, "field.veriborder.birth", doc.birthDate(), "YYYY-MM-DD");
+        // 26.2: the birthday is picked from three dropdowns (year / month / day)
+        // instead of a free-text field; the value still goes out as YYYY-MM-DD.
+        docBirth = BirthDatePicker.at(x2, 124, doc.birthDate(), null);
+        docBirth.register(this::addDropdown);
         // 26.4: sex is a dropdown (M/F/X) instead of a cycle button.
         List<Dropdown.Option> sexes = new ArrayList<>();
         for (String value : new String[]{"M", "F", "X"}) {
@@ -696,7 +701,7 @@ public class BorderTerminalScreen extends VeriScreen {
         String name = docName.getValue().trim();
         String nameLatin = docNameLatin.getValue().trim();
         String number = docNumber.getValue().trim();
-        String birth = docBirth.getValue().trim();
+        String birth = docBirth == null ? doc.birthDate() : docBirth.value().trim();
         String nationality = docNationality.getValue().trim();
         String authority = docAuthority.getValue().trim();
         String place = docPlace.getValue().trim();

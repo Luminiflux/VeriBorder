@@ -8,10 +8,16 @@
 # also rewrite every device texture, block model, blockstate and loot table, so
 # the drawing functions are lifted out of it instead of running the whole file.
 #
-# The audit is the regression gate for the "text runs off the card" bug:
+# The audit is the regression gate for the "text runs off the card" bug and for
+# the shader see-through bug:
 #   * canvas 1 px border must stay transparent (brushes excepted, they are
 #     full-bleed by design),
-#   * every drawn string must sit inside the card face with >= 2 px margins.
+#   * every drawn string must sit inside the card face with >= 2 px margins,
+#   * no pixel may be semi-transparent (0 < alpha < 255). Iris/OptiFine draw any
+#     translucent pixel in the sorted translucent pass, so a feathered icon edge
+#     bleeds light and makes the item look see-through. Save-Bitmap (lifted from
+#     generate_assets.ps1) hardens alpha on save; this gate proves it stayed
+#     hardened, and it also catches hand-edited / re-exported PNGs.
 # Text boxes are measured by re-running the same card functions with Draw-Text /
 # Draw-TextCentered redirected to an empty probe bitmap, so the numbers come from
 # the real layout code, not from re-typed coordinates.
@@ -59,7 +65,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile($source, [ref]$
 if ($parseErrors) { throw "generate_assets.ps1 has parse errors: $($parseErrors[0].Message)" }
 
 $wanted = @('C', 'Font', 'Brush', 'Pen', 'Fill-Rect', 'Draw-Line', 'Draw-Text', 'Draw-TextCentered',
-    'New-Bitmap', 'New-BitmapSmooth', 'Save-Bitmap', 'Get-FitFontSize',
+    'New-Bitmap', 'New-BitmapSmooth', 'Set-HardAlpha', 'Save-Bitmap', 'Get-FitFontSize',
     'New-CardTexture', 'New-CustomDocTexture')
 foreach ($fn in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)) {
     if ($wanted -contains $fn.Name) { . ([scriptblock]::Create($fn.Extent.Text)) }
@@ -98,6 +104,26 @@ function Get-InkBbox([System.Drawing.Bitmap]$bmp) {
     }
     if ($x1 -lt 0) { return $null }
     return @($x0, $y0, $x1, $y1)
+}
+
+# count pixels with 0 < alpha < 255 (the shader-breaking ones)
+function Get-SemiAlphaCount([System.Drawing.Bitmap]$bmp) {
+    $rect = [System.Drawing.Rectangle]::new(0, 0, $bmp.Width, $bmp.Height)
+    $data = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    try {
+        $stride = [Math]::Abs($data.Stride)
+        $bytes = [byte[]]::new($stride * $bmp.Height)
+        [System.Runtime.InteropServices.Marshal]::Copy($data.Scan0, $bytes, 0, $bytes.Length)
+    } finally { $bmp.UnlockBits($data) }
+    $n = 0
+    for ($y = 0; $y -lt $bmp.Height; $y++) {
+        $row = $y * $stride
+        for ($x = 0; $x -lt $bmp.Width; $x++) {
+            $a = $bytes[$row + $x * 4 + 3]
+            if ($a -gt 0 -and $a -lt 255) { $n++ }
+        }
+    }
+    return $n
 }
 
 # probe canvas is wider than the texture so a regression that draws past the
@@ -159,6 +185,7 @@ foreach ($file in (Get-ChildItem $itemTex -Filter *.png | Sort-Object Name)) {
     $bmp = [System.Drawing.Bitmap]::new($file.FullName)
     $W = $bmp.Width; $H = $bmp.Height
     $bb = Get-InkBbox $bmp
+    $semi = Get-SemiAlphaCount $bmp
     $ring = 0
     if ($bb) {
         for ($x = 0; $x -lt $W; $x++) {
@@ -176,6 +203,7 @@ foreach ($file in (Get-ChildItem $itemTex -Filter *.png | Sort-Object Name)) {
     $ringExempt = $fullBleed -contains $name
     if ($ring -gt 0 -and -not $ringExempt) { $status += 'RING' }
     if (-not $bb) { $status += 'EMPTY' }
+    if ($semi -gt 0) { $status += "SEMI_ALPHA:$semi" }
 
     $canvasMargins = if ($bb) { '{0}/{1}/{2}/{3}' -f $bb[0], ($W - 1 - $bb[2]), $bb[1], ($H - 1 - $bb[3]) } else { '-' }
     $face = $cardFaces[$name]
@@ -217,7 +245,7 @@ foreach ($file in (Get-ChildItem $itemTex -Filter *.png | Sort-Object Name)) {
     $inkText = if ($bb) { '{0},{1}-{2},{3}' -f $bb[0], $bb[1], $bb[2], $bb[3] } else { '-' }
     $rows += [pscustomobject]@{
         name = $name; canvas = "$W x $H"; ink = $inkText
-        inkMargins = $canvasMargins; ring = $ring; face = $faceText; text = $textBbox; textMargins = $textMargins
+        inkMargins = $canvasMargins; ring = $ring; semi = $semi; face = $faceText; text = $textBbox; textMargins = $textMargins
         status = ($status -join ','); verdict = $verdict
     }
 }
@@ -240,7 +268,7 @@ foreach ($name in $script:textRuns.Keys) {
 
 Write-Host ''
 if ($fail -gt 0) {
-    Write-Host "FAIL: $fail texture(s) outside their card face / canvas border" -ForegroundColor Red
+    Write-Host "FAIL: $fail texture(s) outside their card face / canvas border, or with semi-transparent pixels" -ForegroundColor Red
     exit 1
 }
-Write-Host 'PASS: all item textures are inside their card face and off the canvas border'
+Write-Host 'PASS: every item texture is inside its card face, off the canvas border, and fully opaque or fully transparent'

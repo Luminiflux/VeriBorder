@@ -3,6 +3,7 @@ package com.veriborder.client.screen;
 import com.veriborder.client.BetterButton;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
+import com.veriborder.client.ui.BirthDatePicker;
 import com.veriborder.client.ui.ColorPalette;
 import com.veriborder.client.ui.Dropdown;
 import com.veriborder.doc.CredentialCode;
@@ -53,7 +54,8 @@ public class ModifierScreen extends VeriScreen {
     private EditBox name;
     private EditBox nameLatin;
     private EditBox number;
-    private EditBox birth;
+    /** 26.2: date of birth is three dropdowns (year / month / day), never typed. */
+    private BirthDatePicker birth;
     private EditBox nationality;
     private EditBox authority;
     private EditBox place;
@@ -267,7 +269,12 @@ public class ModifierScreen extends VeriScreen {
                     captureProfile();
                     rebuildWidgets();
                 }));
-        birth = addField(x1, y + 96, 150, "field.veriborder.birth", working.getString("birthDate"), "hint.veriborder.date");
+        // 26.2: the birthday is picked from three dropdowns (year / month / day)
+        // instead of a free-text field. The column is 150px, so the widths shrink
+        // to 70/42/42 while staying comfortably wider than Dropdown.MIN_WIDTH.
+        birth = BirthDatePicker.at(x1, y + 96, 70, 42, 42, working.getString("birthDate"),
+                next -> working.putString("birthDate", next.value()));
+        birth.register(this::addDropdown);
         nationality = addField(x2, y + 96, 150, "field.veriborder.nationality", working.getString("nationality"));
         authority = addField(x1, y + 128, 150, "field.veriborder.issuer", working.getString("authority"));
         place = addField(x2, y + 128, 150, "field.veriborder.place", working.getString("placeOfIssue"));
@@ -717,7 +724,10 @@ public class ModifierScreen extends VeriScreen {
         working.putString("displayName", displayName.getValue());
         working.putString("nameLatin", nameLatin.getValue());
         working.putString("number", number.getValue());
-        working.putString("birthDate", birth.getValue());
+        if (birth != null) {
+            // Always a valid YYYY-MM-DD: the three dropdowns cannot produce anything else.
+            working.putString("birthDate", birth.value());
+        }
         working.putString("nationality", nationality.getValue());
         working.putString("authority", authority.getValue());
         working.putString("placeOfIssue", place.getValue());

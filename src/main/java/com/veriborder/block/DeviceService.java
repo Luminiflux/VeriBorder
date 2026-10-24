@@ -54,6 +54,19 @@ import java.util.Locale;
 import java.util.UUID;
 
 public final class DeviceService {
+    /**
+     * 26.2 permit issuer: the endorsement a newly issued permit carries when the
+     * applicant did not choose one (or sent nothing at all). "Three months, one
+     * entry" is the built-in default of the permit ("self-carried endorsement").
+     */
+    public static final EndorsementType DEFAULT_INITIAL_ENDORSEMENT = EndorsementType.THREE_MONTH_SINGLE;
+    /** Form value meaning "issue this permit without a built-in endorsement". */
+    public static final String INITIAL_ENDORSEMENT_NONE = "none";
+    /** Form key: the initial endorsement type chosen on the applicant screen. */
+    public static final String INITIAL_ENDORSEMENT_TYPE = "initialEndorsementType";
+    /** Form key: an optional explicit eight-digit code for the initial endorsement. */
+    public static final String INITIAL_ENDORSEMENT_CODE = "initialEndorsementCode";
+
     private DeviceService() {
     }
 
@@ -1360,9 +1373,20 @@ public final class DeviceService {
             device.setLockIssueDate(data.getBoolean("lockIssueDate"));
             device.setLockedIssueDate(data.getString("lockedIssueDate"));
             device.setLockValidity(data.getBoolean("lockValidity"));
-            device.setLockedValidityYears(data.getInt("lockedValidityYears"));
+            // 26.2 month precision: the month key is authoritative, a legacy year
+            // payload (older client / older NBT) is migrated x12. An omitted key
+            // leaves the stored value untouched, like every other optional lock.
+            if (data.contains("lockedValidityMonths") || data.contains("lockedValidityYears")) {
+                device.setLockedValidityMonths(DeviceBlockEntity.validityMonths(data));
+            }
         }
         if (endorsementIssuer) {
+            device.setLockEndorsementType(data.getBoolean("lockEndorsementType"));
+            device.setLockedEndorsementType(data.getString("lockedEndorsementType"));
+        } else if (type == DeviceType.PERMIT_ISSUER && data.contains("lockEndorsementType")) {
+            // 26.2: the permit issuer reuses the same fields for the type of the
+            // built-in endorsement it attaches to every new permit. The keys are
+            // optional so an older screen cannot silently reset the stored lock.
             device.setLockEndorsementType(data.getBoolean("lockEndorsementType"));
             device.setLockedEndorsementType(data.getString("lockedEndorsementType"));
         }
@@ -1397,8 +1421,9 @@ public final class DeviceService {
             if (data.contains("lockVisaValidity")) {
                 device.setLockVisaValidity(data.getBoolean("lockVisaValidity"));
             }
-            if (data.contains("lockedVisaValidityYears")) {
-                device.setLockedVisaValidityYears(data.getInt("lockedVisaValidityYears"));
+            if (data.contains("lockedVisaValidityMonths")
+                    || data.contains("lockedVisaValidityYears")) {
+                device.setLockedVisaValidityMonths(DeviceBlockEntity.visaValidityMonths(data));
             }
         }
         if (type == DeviceType.PASSPORT_ISSUER || type == DeviceType.VISA_ISSUER
@@ -1533,32 +1558,26 @@ public final class DeviceService {
             }
         }
         if (device.lockValidity()) {
-            // 0/permanent styles stay permanent; positive years win over the
+            // 0/permanent styles stay permanent; positive months win over the
             // style default and over any form-supplied expiry date.
-            doc.setExpiryDate(DocumentFactory.lockedExpiry(doc.issueDate(), device.lockedValidityYears()));
+            doc.setExpiryDate(DocumentFactory.lockedExpiry(doc.issueDate(), device.lockedValidityMonths()));
         }
-        if (expected == DocumentKind.PERMIT && form.contains("initialEndorsementType")
-                && !form.getString("initialEndorsementType").isBlank()) {
-            EndorsementType endorsementType = EndorsementType.byId(form.getString("initialEndorsementType"));
-            String today = lockedIssueDate(device, DateUtil.today());
-            String authority = device.lockAuthority() && !device.lockedAuthority().isBlank()
-                    ? device.lockedAuthority() : style.defaultAuthority();
-            boolean fixedCode = device.lockEndorsementCode()
-                    && CredentialCode.isValid(device.lockedEndorsementCode());
-            String code = fixedCode ? device.lockedEndorsementCode()
-                    : CredentialCode.isValid(form.getString("initialEndorsementCode"))
-                    ? form.getString("initialEndorsementCode") : "";
-            String initialExpiry = device.lockValidity()
-                    ? DocumentFactory.lockedExpiry(today, device.lockedValidityYears())
-                    : DocumentFactory.endorsementExpiry(endorsementType, today);
-            CompoundTag initial = DocumentFactory.createEndorsement(endorsementType,
-                    endorsementType.defaultEntries(), today, initialExpiry, authority, code);
-            if (fixedCode) {
-                // The issuer's locked initial-endorsement code is used verbatim,
-                // even if the permit already carries a record with the same code.
-                doc.addEndorsementExact(initial);
-            } else {
-                doc.addEndorsement(initial);
+        if (expected == DocumentKind.PERMIT) {
+            // 26.2: every permit carries a built-in endorsement ("self-carried
+            // endorsement"). The device decides the type; see
+            // buildInitialEndorsement for the complete lock/default rules.
+            String fixedCode = device.lockEndorsementCode()
+                    && CredentialCode.isValid(device.lockedEndorsementCode())
+                    ? device.lockedEndorsementCode() : "";
+            CompoundTag initial = buildInitialEndorsement(device.locks(), doc, form, fixedCode);
+            if (initial != null) {
+                if (!fixedCode.isBlank()) {
+                    // The issuer's locked initial-endorsement code is used verbatim,
+                    // even if the permit already carries a record with the same code.
+                    doc.addEndorsementExact(initial);
+                } else {
+                    doc.addEndorsement(initial);
+                }
             }
         }
         if (expected == DocumentKind.PASSPORT) {
@@ -1697,7 +1716,64 @@ public final class DeviceService {
         String code = fixedCode ? settings.lockedVisaCode()
                 : CredentialCode.sanitize(values.getString("visaCode"));
         return DocumentFactory.createAttachedVisa(passport, country, visaType, entries, authority, code,
-                label, issue, settings.lockVisaValidity(), settings.lockedVisaValidityYears());
+                label, issue, settings.lockVisaValidity(), settings.lockedVisaValidityMonths());
+    }
+
+    /**
+     * Builds the endorsement a permit issuer attaches to every newly issued permit
+     * ("self-carried endorsement"). The device is authoritative:
+     *
+     * <ul>
+     *   <li>a locked initial-endorsement type always wins - even over a forged
+     *       {@code initialEndorsementType} and over an explicit {@code none};
+     *       an unusable locked value falls back to the built-in default;</li>
+     *   <li>unlocked: the applicant's valid choice is honoured; an explicit
+     *       {@code none} issues the permit without one; a blank/unknown/absent
+     *       value falls back to {@link #DEFAULT_INITIAL_ENDORSEMENT};</li>
+     *   <li>the record starts on the <em>issued document's</em> issue date (which
+     *       already carries the terminal's issue-date lock) and expires after the
+     *       type's own validity in months - a three-month endorsement stays three
+     *       months even when the document validity is locked to ten years;</li>
+     *   <li>the entry budget is the type's default (1 for the three-month single
+     *       endorsement), the authority is the permit's authority (locked
+     *       authority included), and a locked code is preserved verbatim.</li>
+     * </ul>
+     *
+     * <p>Pure (no world/block-entity access), so every rule is unit-testable.
+     * Returns {@code null} for a non-permit document or an explicit unlocked
+     * "none".</p>
+     */
+    @Nullable
+    public static CompoundTag buildInitialEndorsement(DeviceBlockEntity.Locks locks, DocumentData permit,
+                                                      CompoundTag form, String lockedCode) {
+        if (permit == null || permit.kind() != DocumentKind.PERMIT) {
+            return null;
+        }
+        DeviceBlockEntity.Locks settings = locks == null ? DeviceBlockEntity.Locks.NONE : locks;
+        EndorsementType type;
+        if (settings.lockEndorsementType()) {
+            EndorsementType lockedType = EndorsementType.byIdOrNull(settings.lockedEndorsementType());
+            type = lockedType == null ? DEFAULT_INITIAL_ENDORSEMENT : lockedType;
+        } else {
+            String submitted = form == null ? "" : form.getString(INITIAL_ENDORSEMENT_TYPE).trim();
+            if (INITIAL_ENDORSEMENT_NONE.equalsIgnoreCase(submitted)) {
+                return null;
+            }
+            EndorsementType requested = EndorsementType.byIdOrNull(submitted);
+            type = requested == null ? DEFAULT_INITIAL_ENDORSEMENT : requested;
+        }
+        String issue = DateUtil.isValid(permit.issueDate())
+                ? permit.issueDate().trim() : DateUtil.today();
+        String authority = settings.lockAuthority() && !settings.lockedAuthority().isBlank()
+                ? settings.lockedAuthority() : permit.authority();
+        String code = "";
+        if (CredentialCode.isValid(lockedCode)) {
+            code = lockedCode.trim();
+        } else if (form != null) {
+            code = CredentialCode.sanitize(form.getString(INITIAL_ENDORSEMENT_CODE));
+        }
+        return DocumentFactory.createEndorsement(type, type.defaultEntries(), issue,
+                DocumentFactory.endorsementExpiry(type, issue), authority, code);
     }
 
     private static void issueVisa(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, CompoundTag data,
@@ -1736,7 +1812,7 @@ public final class DeviceService {
                     : device.country().isBlank() ? "中国" : device.country();
             String issue = lockedIssueDate(device, DateUtil.today());
             String expiry = device.lockValidity()
-                    ? DocumentFactory.lockedExpiry(issue, device.lockedValidityYears())
+                    ? DocumentFactory.lockedExpiry(issue, device.lockedValidityMonths())
                     : DateUtil.plusYears(issue, 1);
             CompoundTag values = new CompoundTag();
             values.putString("country", country);
@@ -1841,7 +1917,7 @@ public final class DeviceService {
         if (settings.lockValidity()) {
             String issue = DateUtil.isValid(form.getString("issueDate"))
                     ? form.getString("issueDate") : DateUtil.today();
-            form.putString("expiryDate", DocumentFactory.lockedExpiry(issue, settings.lockedValidityYears()));
+            form.putString("expiryDate", DocumentFactory.lockedExpiry(issue, settings.lockedValidityMonths()));
         }
         if (settings.lockVisaName()) {
             // A locked blank value is meaningful: force the country/type fallback
@@ -1969,7 +2045,7 @@ public final class DeviceService {
             // defaults + today and the machine's own authority/code.
             issue = lockedIssueDate(device, DateUtil.today());
             expiry = device.lockValidity()
-                    ? DocumentFactory.lockedExpiry(issue, device.lockedValidityYears())
+                    ? DocumentFactory.lockedExpiry(issue, device.lockedValidityMonths())
                     : DocumentFactory.endorsementExpiry(type, issue);
             entries = type.defaultEntries();
             authority = machineAuthority(device);
@@ -1978,7 +2054,7 @@ public final class DeviceService {
             issue = lockedIssueDate(device,
                     DateUtil.isValid(data.getString("issueDate")) ? data.getString("issueDate") : DateUtil.today());
             if (device.lockValidity()) {
-                expiry = DocumentFactory.lockedExpiry(issue, device.lockedValidityYears());
+                expiry = DocumentFactory.lockedExpiry(issue, device.lockedValidityMonths());
             } else {
                 expiry = DateUtil.isValid(data.getString("expiryDate"))
                         ? data.getString("expiryDate") : DocumentFactory.endorsementExpiry(type, issue);

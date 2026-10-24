@@ -1,5 +1,6 @@
 {
     "parent":  "veriborder:block/exit_gate",
+    "gui_light":  "front",
     "display":  {
                     "thirdperson_righthand":  {
                                                   "rotation":  [

@@ -1,3 +1,4 @@
 {
-    "parent":  "veriborder:block/permit_issuer"
+    "parent":  "veriborder:block/permit_issuer",
+    "gui_light":  "front"
 }

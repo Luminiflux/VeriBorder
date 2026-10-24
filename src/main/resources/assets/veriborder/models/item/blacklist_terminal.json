@@ -1,3 +1,4 @@
 {
-    "parent":  "veriborder:block/blacklist_terminal"
+    "parent":  "veriborder:block/blacklist_terminal",
+    "gui_light":  "front"
 }

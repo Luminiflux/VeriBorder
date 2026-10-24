@@ -1,3 +1,4 @@
 {
-    "parent":  "veriborder:block/visa_issuer"
+    "parent":  "veriborder:block/visa_issuer",
+    "gui_light":  "front"
 }
