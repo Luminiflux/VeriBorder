@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "veriborder:block/device_extension" }
+  }
+}

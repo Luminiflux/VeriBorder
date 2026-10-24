@@ -8,15 +8,16 @@ import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
+/** Client → server "generate a document from this form". Protocol 2: null-safe payload. */
 public class ModifierGeneratePacket {
     private final CompoundTag data;
 
     public ModifierGeneratePacket(CompoundTag data) {
-        this.data = data;
+        this.data = data == null ? new CompoundTag() : data;
     }
 
     public ModifierGeneratePacket(FriendlyByteBuf buffer) {
-        this.data = buffer.readNbt();
+        this(buffer.readNbt());
     }
 
     public void encode(FriendlyByteBuf buffer) {
@@ -28,9 +29,14 @@ public class ModifierGeneratePacket {
         ctx.enqueueWork(() -> {
             ServerPlayer player = ctx.getSender();
             if (player != null) {
-                DeviceService.generateFromModifier(player, data == null ? new CompoundTag() : data);
+                DeviceService.generateFromModifier(player, data);
             }
         });
         ctx.setPacketHandled(true);
+    }
+
+    /** Never {@code null}. */
+    public CompoundTag data() {
+        return data;
     }
 }

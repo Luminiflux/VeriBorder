@@ -1,17 +1,37 @@
 package com.veriborder.doc;
 
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 
 import java.time.LocalDate;
 import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class DocumentFactory {
+    /**
+     * Trusted form key an issuing terminal injects with the administrator's
+     * locked document title. 26.4: the lock must not clear the configured name,
+     * so the device supplies it under its own key and the applicant's
+     * {@code displayName} is ignored while the lock is on.
+     */
+    public static final String LOCKED_DISPLAY_NAME = "lockedDisplayName";
+    /** Trusted form key: accent colour of the locked registry template. */
+    public static final String LOCKED_STYLE_COLOR = "lockedStyleColor";
+    /** Trusted form key: icon id of the locked registry template. */
+    public static final String LOCKED_STYLE_ICON = "lockedStyleIcon";
+
     private DocumentFactory() {
     }
 
     public static DocumentData fromForm(DocStyle style, CompoundTag form) {
         DocumentData data = DocumentData.createEmpty(style);
+        // 26.2 identity locks. "lockDocumentName" locks the DOCUMENT name (the
+        // printed title / custom cover name), not the holder's name: the holder
+        // name always comes from the form. "lockNumber" keeps the number
+        // system-generated.
+        boolean lockDocumentName = form.getBoolean("lockDocumentName");
+        boolean lockNumber = form.getBoolean("lockNumber");
         String name = form.getString("name");
         String nameLatin = form.getString("nameLatin");
         String sex = normalizeSex(form.getString("sex"));
@@ -21,9 +41,16 @@ public final class DocumentFactory {
         String nationality = blankTo(form.getString("nationality"), style.defaultNationality());
         String place = blankTo(form.getString("placeOfIssue"), style.defaultPlace());
         String address = blankTo(form.getString("address"), defaultAddress(style));
-        String number = form.getString("number").trim();
-        if (number.isBlank()) {
-            number = generateNumber(style, birthDate, sex);
+        String region = form.getString("numberRegion");
+        String sequence = form.getString("numberSequence");
+        String number;
+        if (lockNumber) {
+            number = generateNumber(style, birthDate, sex, region, sequence);
+        } else {
+            number = form.getString("number").trim();
+            if (number.isBlank()) {
+                number = generateNumber(style, birthDate, sex, region, sequence);
+            }
         }
         String expiry;
         if (style.permanent()) {
@@ -48,12 +75,40 @@ public final class DocumentFactory {
         data.setNationality(nationality);
         data.setPlaceOfIssue(place);
         data.setStatus(DocumentStatus.VALID);
-        applyCustomization(data, form);
+        // 26.3 registry: one issuing-country field for every document kind. The
+        // registry code (form issuerCountry) wins; the legacy mrzCountry key and
+        // finally the layout code keep old forms/documents working.
+        String issuerCountry = form.getString(DocumentData.ISSUER_COUNTRY).trim();
+        if (issuerCountry.isBlank()) {
+            issuerCountry = form.getString(DocumentData.LEGACY_MRZ_COUNTRY).trim();
+        }
+        data.setIssuerCountry(issuerCountry.isBlank() ? style.mrzCountry() : issuerCountry);
+        applyVisaFreeCodes(data, form);
+        if (!lockDocumentName) {
+            applyCustomization(data, form);
+        }
         // Independent display name: applied after the profile/custom cover so it
         // always survives document creation and never gets overwritten by them.
-        String displayName = form.getString("displayName").trim();
+        // 26.4 fix: a locked document name is taken from the TRUSTED device key
+        // ("lockedDisplayName") the issuing terminal injects, not from the
+        // applicant's "displayName" — the old code cleared the name, so a locked
+        // custom title never reached the issued document. A blank locked value
+        // still means "keep the official preset title".
+        String displayName = lockDocumentName
+                ? form.getString(LOCKED_DISPLAY_NAME).trim()
+                : form.getString("displayName").trim();
         if (!displayName.isBlank()) {
             data.setDisplayName(displayName);
+        }
+        // 26.4 registry-template layout lock: the device may carry the template's
+        // colour/icon next to the layout id. Both keys are server-injected, and a
+        // document that already has a custom cover keeps its own colour.
+        if (form.contains(LOCKED_STYLE_COLOR) && !data.customStyle()) {
+            data.setStyleColor(form.getInt(LOCKED_STYLE_COLOR));
+        }
+        String styleIcon = form.getString(LOCKED_STYLE_ICON).trim();
+        if (!styleIcon.isBlank()) {
+            data.setCustomIcon(styleIcon);
         }
         return data;
     }
@@ -67,6 +122,38 @@ public final class DocumentFactory {
         String type = form.getString("customType").trim();
         int color = form.contains("customColor") ? form.getInt("customColor") : data.style().accentColor();
         data.applyCustomStyle(name, shortName, type, color);
+    }
+
+    /**
+     * 26.2: copies the permanent-code list carried by an issuer form onto the new
+     * document. The existing {@code DocumentData.visaFreeCodes} storage is reused
+     * (no new field): invalid entries are dropped, duplicates collapse and every
+     * added code re-signs the document.
+     */
+    public static void applyVisaFreeCodes(DocumentData data, CompoundTag form) {
+        ListTag list = form.getList("visaFreeCodes", Tag.TAG_STRING);
+        for (int i = 0; i < list.size(); i++) {
+            data.addVisaFreeCode(list.getString(i));
+        }
+    }
+
+    /**
+     * 26.2 entry-state policy: a newly issued document only creates an entry
+     * record when the issuer asked for it <em>and</em> the player has no active
+     * session. An existing session is never overwritten.
+     */
+    public static boolean shouldBeginIssueEntry(boolean issueEntryState, boolean hasActiveSession) {
+        return issueEntryState && !hasActiveSession;
+    }
+
+    /** The preset sample name of a layout (locked-name issuers always use it). */
+    public static String sampleNameFor(DocStyle style) {
+        return sampleName(style);
+    }
+
+    /** The preset sample Latin name of a layout (matches {@link #sampleNameFor}). */
+    public static String sampleLatinFor(DocStyle style) {
+        return sampleLatin(style);
     }
 
     public static DocumentData sample(DocStyle style) {
@@ -98,19 +185,30 @@ public final class DocumentFactory {
     }
 
     public static String generateNumber(DocStyle style, String birthDate, String sex) {
+        return generateNumber(style, birthDate, sex, "", "");
+    }
+
+    /**
+     * 26.2 number generator with explicit mainland overrides.
+     *
+     * <p>CN_ID is 18 digits: {@code RRRRRR} region (6, defaults to
+     * {@link DocStyle#numberPrefix()}), {@code YYYYMMDD} birth date, {@code SS}
+     * two-digit sequence (default random), {@code G} gender digit (odd = male,
+     * even = female, chosen automatically) and {@code C} the ISO 7064 MOD 11-2
+     * check digit. Every other layout keeps its previous generator; the overrides
+     * only affect CN_ID.</p>
+     */
+    public static String generateNumber(DocStyle style, String birthDate, String sex, String region, String sequence2) {
         ThreadLocalRandom random = ThreadLocalRandom.current();
         if (style == DocStyle.CN_ID) {
             String birth = birthDate.replace("-", "");
             if (birth.length() != 8) {
                 birth = "19900101";
             }
-            int sequence = Math.min(998, random.nextInt(100, 1000));
-            if ("F".equalsIgnoreCase(sex) && sequence % 2 != 0) {
-                sequence++;
-            } else if (!"F".equalsIgnoreCase(sex) && sequence % 2 == 0) {
-                sequence++;
-            }
-            String base = style.numberPrefix() + birth + String.format("%03d", sequence);
+            String area = mainlandRegion(region, style.numberPrefix());
+            String sequence = mainlandSequence(sequence2, random);
+            char gender = mainlandGenderDigit(sex, random);
+            String base = area + birth + sequence + gender;
             return base + mainlandCheckDigit(base);
         }
         if (style == DocStyle.HK_ID) {
@@ -127,6 +225,49 @@ public final class DocumentFactory {
             return prefix + String.format("%07d", random.nextInt(1000000, 10000000));
         }
         return prefix + String.format("%08d", random.nextInt(10000000, 100000000));
+    }
+
+    /**
+     * Six-digit mainland region code: a usable override wins, otherwise the
+     * layout prefix, otherwise zero padding. Non-digits are ignored.
+     */
+    private static String mainlandRegion(String override, String fallback) {
+        String digits = override == null ? "" : override.replaceAll("[^0-9]", "");
+        if (digits.length() >= 6) {
+            return digits.substring(0, 6);
+        }
+        String prefix = fallback == null ? "" : fallback.replaceAll("[^0-9]", "");
+        if (prefix.length() >= 6) {
+            return prefix.substring(0, 6);
+        }
+        return (prefix + "000000").substring(0, 6);
+    }
+
+    /** Two-digit mainland sequence code: a usable override wins, else random 00..99. */
+    private static String mainlandSequence(String override, ThreadLocalRandom random) {
+        String digits = override == null ? "" : override.replaceAll("[^0-9]", "");
+        if (digits.isEmpty()) {
+            return String.format("%02d", random.nextInt(0, 100));
+        }
+        if (digits.length() > 2) {
+            digits = digits.substring(digits.length() - 2);
+        }
+        return String.format("%02d", Integer.parseInt(digits));
+    }
+
+    /**
+     * Mainland gender digit: odd for male, even for female. An unspecified/other
+     * sex gets an arbitrary digit (the field is still a valid check-digit input).
+     */
+    private static char mainlandGenderDigit(String sex, ThreadLocalRandom random) {
+        int half = random.nextInt(5);
+        if ("F".equalsIgnoreCase(sex)) {
+            return (char) ('0' + half * 2);
+        }
+        if ("M".equalsIgnoreCase(sex)) {
+            return (char) ('0' + (half * 2 + 1));
+        }
+        return (char) ('0' + random.nextInt(10));
     }
 
     private static String mainlandCheckDigit(String base17) {

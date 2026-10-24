@@ -3,7 +3,10 @@ package com.veriborder.client.screen;
 import com.veriborder.client.BetterButton;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
+import com.veriborder.client.ui.ColorPalette;
+import com.veriborder.client.ui.Dropdown;
 import com.veriborder.doc.CredentialCode;
+import com.veriborder.doc.CredentialState;
 import com.veriborder.doc.DateUtil;
 import com.veriborder.doc.DocumentData;
 import com.veriborder.doc.DocumentKind;
@@ -11,6 +14,7 @@ import com.veriborder.doc.DocumentStatus;
 import com.veriborder.doc.DocStyle;
 import com.veriborder.doc.EndorsementType;
 import com.veriborder.doc.VisaType;
+import com.veriborder.doc.VisaRecord;
 import com.veriborder.network.ModNetwork;
 import com.veriborder.network.ModifierSavePacket;
 import net.minecraft.client.gui.GuiGraphics;
@@ -19,6 +23,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,10 +64,8 @@ public class ModifierScreen extends VeriScreen {
     private EditBox customName;
     private EditBox customShort;
     private EditBox customType;
-    private EditBox customColor;
-    private BetterButton sexButton;
-    private BetterButton statusButton;
-    private BetterButton styleButton;
+    private ColorPalette colorPicker;
+    private EditBox colorHex;
 
     private boolean editingVisa;
     private boolean editingEndorsement;
@@ -79,10 +82,10 @@ public class ModifierScreen extends VeriScreen {
     private EditBox recExpiry;
     private EditBox recAuthority;
     private EditBox recCode;
-    private BetterButton recTypeButton;
-    private BetterButton recStatusButton;
     private EditBox visaFreeCode;
     private String visaFreeError = "";
+    private int visaFreeSelected = -1;
+    private int visaFreeScroll;
 
     public ModifierScreen(CompoundTag payload) {
         super(Component.translatable("screen.veriborder.modifier"), 520, 360);
@@ -111,6 +114,8 @@ public class ModifierScreen extends VeriScreen {
         editIndex = -1;
         recordScroll = 0;
         visaFreeError = "";
+        visaFreeSelected = -1;
+        visaFreeScroll = 0;
     }
 
     @Override
@@ -145,10 +150,58 @@ public class ModifierScreen extends VeriScreen {
         }
         addRenderableWidget(new BetterButton(left + 440, top + 330, 70, 22,
                 Component.translatable("button.veriborder.save"), button -> save(), Ui.GREEN));
+        addRenderableWidget(new BetterButton(left + 212, top + 330, 96, 22,
+                Component.translatable("button.veriborder.view"), button -> openView(), Ui.CYAN, true));
         addRenderableWidget(new BetterButton(left + 102, top + 330, 100, 22,
                 Component.translatable("button.veriborder.generate"), button -> openGenerator(), Ui.GOLD, true));
         addRenderableWidget(new BetterButton(left + 20, top + 330, 76, 22,
                 Component.translatable("button.veriborder.close"), button -> onClose(), Ui.MUTED, true));
+    }
+
+    /**
+     * 26.3 viewer entry: previews the document currently being edited in the
+     * shared paged viewer. The working tag (not the saved one) is shown, and
+     * closing the viewer reopens the modifier with the same working copy, so a
+     * preview never discards unsaved edits.
+     */
+    private void openView() {
+        if (working == null) {
+            return;
+        }
+        captureProfile();
+        if (tab == TAB_STYLE) {
+            commitCustomStyle();
+        }
+        DocumentData preview = DocumentData.fromTag(working.copy());
+        preview.sign();
+        CompoundTag payload = snapshotPayload();
+        net.minecraft.client.Minecraft.getInstance().setScreen(new DocumentViewScreen(ItemStack.EMPTY,
+                preview, null, null, List.of(),
+                () -> net.minecraft.client.Minecraft.getInstance().setScreen(
+                        new ModifierScreen(payload))));
+    }
+
+    /** Rebuilds a modifier payload whose first entry is the live working copy. */
+    private CompoundTag snapshotPayload() {
+        CompoundTag payload = new CompoundTag();
+        ListTag docs = new ListTag();
+        addSnapshotEntry(docs, entries.get(selected).slot(), working.copy());
+        for (int i = 0; i < entries.size(); i++) {
+            if (i == selected) {
+                continue;
+            }
+            Entry entry = entries.get(i);
+            addSnapshotEntry(docs, entry.slot(), entry.tag().copy());
+        }
+        payload.put("docs", docs);
+        return payload;
+    }
+
+    private static void addSnapshotEntry(ListTag docs, int slot, CompoundTag tag) {
+        CompoundTag entry = new CompoundTag();
+        entry.putInt("slot", slot);
+        entry.put("doc", tag);
+        docs.add(entry);
     }
 
     private void openGenerator() {
@@ -185,22 +238,35 @@ public class ModifierScreen extends VeriScreen {
         name = addField(x1, y + 32, 150, "field.veriborder.name", working.getString("name"));
         nameLatin = addField(x2, y + 32, 150, "field.veriborder.name_latin", working.getString("nameLatin"));
         number = addField(x1, y + 64, 150, "field.veriborder.number", working.getString("number"), "hint.veriborder.auto");
-        sexButton = addRenderableWidget(new BetterButton(x2, y + 60, 74, 20,
-                Component.translatable("sex.veriborder." + sexKey(sex)), button -> {
+        // 26.4: sex (M/F/X) and document status (4 values) are dropdowns.
+        List<Dropdown.Option> sexes = new ArrayList<>();
+        for (String value : new String[]{"M", "F", "X"}) {
+            sexes.add(new Dropdown.Option(value,
+                    Component.translatable("sex.veriborder." + sexKey(value)).getString()));
+        }
+        addDropdown(Dropdown.at(x2, y + 60, 74)
+                .options(sexes)
+                .selected(sex)
+                .tooltip("field.veriborder.sex")
+                .onChange(id -> {
+                    sex = id;
                     captureProfile();
-                    sex = switch (sex) {
-                        case "M" -> "F";
-                        case "F" -> "X";
-                        default -> "M";
-                    };
                     rebuildWidgets();
-                }, Ui.CYAN, true));
-        statusButton = addRenderableWidget(new BetterButton(x2 + 78, y + 60, 72, 20,
-                Component.translatable("status.veriborder." + status), button -> {
+                }));
+        List<Dropdown.Option> statuses = new ArrayList<>();
+        for (DocumentStatus value : DocumentStatus.values()) {
+            statuses.add(new Dropdown.Option(value.id(),
+                    Component.translatable(value.translationKey()).getString()));
+        }
+        addDropdown(Dropdown.at(x2 + 78, y + 60, 72)
+                .options(statuses)
+                .selected(status)
+                .tooltip("field.veriborder.status")
+                .onChange(id -> {
+                    status = DocumentStatus.byId(id).id();
                     captureProfile();
-                    status = DocumentStatus.byId(status).next().id();
                     rebuildWidgets();
-                }, DocumentStatus.byId(status).color(), true));
+                }));
         birth = addField(x1, y + 96, 150, "field.veriborder.birth", working.getString("birthDate"), "hint.veriborder.date");
         nationality = addField(x2, y + 96, 150, "field.veriborder.nationality", working.getString("nationality"));
         authority = addField(x1, y + 128, 150, "field.veriborder.issuer", working.getString("authority"));
@@ -211,20 +277,17 @@ public class ModifierScreen extends VeriScreen {
     }
 
     private void buildStyle() {
-        addRenderableWidget(new BetterButton(left + 404, top + 82, 100, 20,
-                Component.translatable("button.veriborder.change_style"), button -> {
-                    captureProfile();
-                    style = DocStyle.nextForKind(style.kind(), style);
-                    working.putString("style", style.id());
-                    working.putString("kind", style.kind().name());
-                    working.remove("customStyle");
-                    working.remove("customName");
-                    working.remove("customShortName");
-                    working.remove("customType");
-                    working.remove("customColor");
-                    DocumentData.fromTag(working).sign();
-                    rebuildWidgets();
-                }, accent, true));
+        // 26.4: the document layout is a dropdown over every layout of this kind.
+        List<Dropdown.Option> layouts = new ArrayList<>();
+        for (DocStyle value : DocStyle.forKind(style.kind())) {
+            layouts.add(new Dropdown.Option(value.id(),
+                    Component.translatable(value.displayNameKey()).getString()));
+        }
+        addDropdown(Dropdown.at(left + 404, top + 82, 100)
+                .options(layouts)
+                .selected(style.id())
+                .tooltip("button.veriborder.change_style")
+                .onChange(this::selectStyle));
         DocumentData data = DocumentData.fromTag(working);
         customName = addField(left + 174, top + 244, 150, "field.veriborder.custom_name",
                 data.customStyle() ? working.getString("customName")
@@ -233,12 +296,40 @@ public class ModifierScreen extends VeriScreen {
                 data.customStyle() ? working.getString("customShortName") : data.shortName());
         customType = addField(left + 174, top + 276, 150, "field.veriborder.custom_type",
                 data.customStyle() ? working.getString("customType") : data.documentType());
-        customColor = addField(left + 334, top + 276, 100, "field.veriborder.custom_color",
-                String.format("#%06X", data.accentColor() & 0xFFFFFF));
+        // 26.3 round 12: shared palette picker (presets + recent + RGB).
+        colorPicker = ColorPalette.at(left + 334, top + 272, 168, data.accentColor());
+        colorHex = new EditBox(this.font, colorPicker.hexFieldX(), colorPicker.hexFieldY(),
+                colorPicker.hexFieldWidth(), 12, Component.empty());
+        colorHex.setBordered(false);
+        colorHex.setTextColor(0xFFE9F3FF);
+        colorHex.setMaxLength(7);
+        colorHex.setValue(ColorPalette.hexValue(data.accentColor()));
+        colorHex.setVisible(false);
+        addRenderableWidget(colorHex);
+        colorPicker.hex(colorHex);
         addRenderableWidget(new BetterButton(left + 174, top + 306, 100, 20,
                 Component.translatable("button.veriborder.apply_custom"), button -> applyCustomStyle(), Ui.PURPLE, true));
         addRenderableWidget(new BetterButton(left + 280, top + 306, 96, 20,
                 Component.translatable("button.veriborder.clear_custom"), button -> clearCustomStyle(), Ui.MUTED, true));
+    }
+
+    /** 26.4: applies a layout chosen from the dropdown and clears custom overlays. */
+    private void selectStyle(String styleId) {
+        DocStyle next = DocStyle.byIdOrNull(styleId);
+        if (next == null || next.kind() != style.kind() || next == style || working == null) {
+            return;
+        }
+        captureProfile();
+        style = next;
+        working.putString("style", style.id());
+        working.putString("kind", style.kind().name());
+        working.remove("customStyle");
+        working.remove("customName");
+        working.remove("customShortName");
+        working.remove("customType");
+        working.remove("customColor");
+        DocumentData.fromTag(working).sign();
+        rebuildWidgets();
     }
 
     private void applyCustomStyle() {
@@ -251,7 +342,7 @@ public class ModifierScreen extends VeriScreen {
         if (customName == null || working == null) {
             return false;
         }
-        int color = parseColor(customColor.getValue(), style.accentColor());
+        int color = colorPicker == null ? style.accentColor() : colorPicker.commit();
         String display = customName.getValue().isBlank() ? Component.translatable(style.displayNameKey()).getString()
                 : customName.getValue();
         String shortName = customShort.getValue().isBlank() ? Component.translatable(style.shortNameKey()).getString()
@@ -271,15 +362,7 @@ public class ModifierScreen extends VeriScreen {
     }
 
     private static int parseColor(String value, int fallback) {
-        if (value == null) {
-            return fallback;
-        }
-        String cleaned = value.trim().replace("#", "").replace("0x", "");
-        try {
-            return Integer.parseInt(cleaned, 16) & 0x00FFFFFF;
-        } catch (NumberFormatException exception) {
-            return fallback;
-        }
+        return ColorPalette.parse(value, fallback);
     }
 
     private void buildVisas() {
@@ -291,25 +374,28 @@ public class ModifierScreen extends VeriScreen {
                 Component.translatable("button.veriborder.delete"), button -> deleteVisa(), Ui.RED, true));
         if (editingVisa) {
             buildRecordEditor(true);
-        } else if (DocumentData.fromTag(working).kind() == DocumentKind.PASSPORT) {
+        } else if (DocumentData.fromTag(working).kind() != DocumentKind.ID_CARD) {
+            // 26.2: permanent codes are a permit + passport feature.
             buildVisaFreePanel();
         }
     }
 
     /**
-     * Passport visa-free codes are managed in the free right-hand panel of the
-     * visa tab. They are stored as the {@code visaFreeCodes} string list and are
-     * one of the credential sources a visa gate accepts.
+     * Permanent codes are managed in the free right-hand panel of the visa tab.
+     * They are stored as the {@code visaFreeCodes} string list (the existing
+     * {@link DocumentData#visaFreeCodes()} storage) and are one of the credential
+     * sources a visa gate accepts. The list is scrollable and shows every code;
+     * clicking a row selects it and Delete removes the selected one.
      */
     private void buildVisaFreePanel() {
-        visaFreeCode = addField(left + 358, top + 168, 128, "field.veriborder.visa_free_code", "", null);
+        visaFreeCode = addField(left + 350, top + 244, 152, "field.veriborder.visa_free_code", "", "hint.veriborder.code_8");
         visaFreeCode.setMaxLength(8);
         visaFreeCode.setFilter(ScreenCodes::digitsUpTo8);
-        addRenderableWidget(new BetterButton(left + 358, top + 190, 62, 18,
+        addRenderableWidget(new BetterButton(left + 350, top + 266, 74, 18,
                 Component.translatable("button.veriborder.add"), button -> addVisaFreeCode(), Ui.GREEN, true));
-        addRenderableWidget(new BetterButton(left + 424, top + 190, 62, 18,
-                Component.translatable("button.veriborder.remove_last"), button -> removeLastVisaFreeCode(), Ui.AMBER, true));
-        addRenderableWidget(new BetterButton(left + 358, top + 212, 128, 18,
+        addRenderableWidget(new BetterButton(left + 428, top + 266, 74, 18,
+                Component.translatable("button.veriborder.delete"), button -> deleteVisaFreeCode(), Ui.AMBER, true));
+        addRenderableWidget(new BetterButton(left + 350, top + 288, 152, 18,
                 Component.translatable("button.veriborder.clear_all"), button -> clearVisaFreeCodes(), Ui.RED, true));
     }
 
@@ -327,19 +413,28 @@ public class ModifierScreen extends VeriScreen {
         DocumentData.fromTag(working).addVisaFreeCode(value);
         visaFreeCode.setValue("");
         visaFreeError = "";
+        visaFreeSelected = codes.size();
     }
 
-    private void removeLastVisaFreeCode() {
+    private void deleteVisaFreeCode() {
         List<String> codes = visaFreeCodes();
-        if (!codes.isEmpty()) {
-            DocumentData.fromTag(working).removeVisaFreeCode(codes.get(codes.size() - 1));
-            visaFreeError = "";
+        if (codes.isEmpty()) {
+            return;
         }
+        int index = visaFreeSelected >= 0 && visaFreeSelected < codes.size()
+                ? visaFreeSelected : codes.size() - 1;
+        DocumentData.fromTag(working).removeVisaFreeCode(codes.get(index));
+        int remaining = codes.size() - 1;
+        visaFreeSelected = remaining <= 0 ? -1 : Math.min(index, remaining - 1);
+        visaFreeError = "";
+        rebuildWidgets();
     }
 
     private void clearVisaFreeCodes() {
         DocumentData.fromTag(working).clearVisaFreeCodes();
+        visaFreeSelected = -1;
         visaFreeError = "";
+        rebuildWidgets();
     }
 
     private List<String> visaFreeCodes() {
@@ -372,39 +467,64 @@ public class ModifierScreen extends VeriScreen {
     private void buildRecordEditor(boolean visa) {
         int x = left + 350;
         int y = top + 80;
+        // Load the selected record first: the dropdowns below show its type and
+        // status, so those values must be resolved before the controls are built.
+        CompoundTag record = selectedRecord(visa);
+        if (record != null) {
+            if (visa) {
+                visaType = VisaType.byId(record.getString("type"));
+            } else {
+                endorsementType = EndorsementType.byId(record.getString("type"));
+            }
+            recordStatus = record.getString("status").isBlank() ? "ACTIVE" : record.getString("status");
+        }
         if (visa) {
             recCountry = addField(x, y + 22, 152, "field.veriborder.visa_country", "");
         }
-        recTypeButton = addRenderableWidget(new BetterButton(x, y + 44, 152, 20,
-                Component.translatable(visa ? visaType.translationKey() : endorsementType.translationKey()),
-                button -> {
+        // 26.4: record type (6 visa types / 3 endorsement types) is a dropdown.
+        List<Dropdown.Option> types = new ArrayList<>();
+        if (visa) {
+            for (VisaType value : VisaType.values()) {
+                types.add(new Dropdown.Option(value.id(),
+                        Component.translatable(value.translationKey()).getString()));
+            }
+        } else {
+            for (EndorsementType value : EndorsementType.values()) {
+                types.add(new Dropdown.Option(value.id(),
+                        Component.translatable(value.translationKey()).getString()));
+            }
+        }
+        addDropdown(Dropdown.at(x, y + 44, 152)
+                .options(types)
+                .selected(visa ? visaType.id() : endorsementType.id())
+                .tooltip("field.veriborder.visa_type")
+                .onChange(id -> {
                     if (visa) {
-                        visaType = visaType.next();
+                        visaType = VisaType.byId(id);
                     } else {
-                        endorsementType = endorsementType.next();
+                        endorsementType = EndorsementType.byId(id);
                     }
-                    recTypeButton.setMessage(Component.translatable(visa ? visaType.translationKey()
-                            : endorsementType.translationKey()));
-                }, Ui.PURPLE, true));
+                }));
         recEntries = addField(x, y + 76, 152, "field.veriborder.entries", "1", "hint.veriborder.unlimited");
         recIssue = addField(x, y + 104, 152, "field.veriborder.issue", DateUtil.today(), "hint.veriborder.date");
         recExpiry = addField(x, y + 132, 152, "field.veriborder.expiry", DateUtil.plusYears(DateUtil.today(), 1),
                 "hint.veriborder.date");
-        recAuthority = addField(x, y + 160, 152, "field.veriborder.authority", "Authority");
+        recAuthority = addField(x, y + 160, 152, "field.veriborder.authority", Component.translatable("field.veriborder.authority").getString());
         recCode = addField(x, y + 188, 152, "field.veriborder.code", "", "hint.veriborder.code_auto");
         recCode.setMaxLength(8);
         recCode.setFilter(ScreenCodes::digitsUpTo8);
-        recStatusButton = addRenderableWidget(new BetterButton(x, y + 212, 152, 20,
-                Component.translatable("record.veriborder.status." + recordStatus.toLowerCase(Locale.ROOT)),
-                button -> {
-                    recordStatus = switch (recordStatus) {
-                        case "ACTIVE" -> "REVOKED";
-                        case "REVOKED" -> "EXPIRED";
-                        default -> "ACTIVE";
-                    };
-                    recStatusButton.setMessage(Component.translatable("record.veriborder.status."
-                            + recordStatus.toLowerCase(Locale.ROOT)));
-                }, recordStatusColor(), true));
+        // 26.4: record status (3 values) is a dropdown instead of a cycle.
+        List<Dropdown.Option> statuses = new ArrayList<>();
+        for (String value : new String[]{"ACTIVE", "REVOKED", "EXPIRED"}) {
+            statuses.add(new Dropdown.Option(value,
+                    Component.translatable("record.veriborder.status." + value.toLowerCase(Locale.ROOT))
+                            .getString()));
+        }
+        addDropdown(Dropdown.at(x, y + 212, 152)
+                .options(statuses)
+                .selected(recordStatus)
+                .tooltip("field.veriborder.status")
+                .onChange(id -> recordStatus = id));
         addRenderableWidget(new BetterButton(x, y + 232, 74, 20,
                 Component.translatable("button.veriborder.save_record"), button -> saveRecord(visa), Ui.GREEN, true));
         addRenderableWidget(new BetterButton(x + 80, y + 232, 72, 20,
@@ -413,35 +533,16 @@ public class ModifierScreen extends VeriScreen {
                     editingEndorsement = false;
                     rebuildWidgets();
                 }, Ui.MUTED, true));
-        // Fill the editor from the selected record (or defaults for a new one).
-        CompoundTag record = selectedRecord(visa);
         if (record != null) {
             if (visa) {
                 recCountry.setValue(record.getString("country"));
-                visaType = VisaType.byId(record.getString("type"));
-            } else {
-                endorsementType = EndorsementType.byId(record.getString("type"));
             }
             recEntries.setValue(String.valueOf(record.getInt("entries")));
             recIssue.setValue(record.getString("issueDate"));
             recExpiry.setValue(record.getString("expiryDate"));
             recAuthority.setValue(record.getString("authority"));
             recCode.setValue(record.getString("code"));
-            recordStatus = record.getString("status").isBlank() ? "ACTIVE" : record.getString("status");
-            recTypeButton.setMessage(Component.translatable(visa ? visaType.translationKey() : endorsementType.translationKey()));
-            recStatusButton.setMessage(Component.translatable("record.veriborder.status." + recordStatus.toLowerCase(Locale.ROOT)));
-            if (visa) {
-                recCountry.setValue(record.getString("country"));
-            }
         }
-    }
-
-    private int recordStatusColor() {
-        return switch (recordStatus) {
-            case "ACTIVE" -> Ui.GREEN;
-            case "REVOKED" -> Ui.RED;
-            default -> Ui.AMBER;
-        };
     }
 
     private CompoundTag selectedRecord(boolean visa) {
@@ -649,6 +750,22 @@ public class ModifierScreen extends VeriScreen {
     }
 
     @Override
+    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        if (colorHex != null) {
+            colorHex.setVisible(colorPicker != null && colorPicker.open());
+        }
+        super.render(graphics, mouseX, mouseY, partialTick);
+        overlay(graphics, g -> {
+            if (colorPicker != null && colorPicker.open()) {
+                colorPicker.draw(g, font, accent);
+                if (colorHex != null) {
+                    colorHex.render(g, (int) toUiX(mouseX), (int) toUiY(mouseY), partialTick);
+                }
+            }
+        });
+    }
+
+    @Override
     public void renderBackground(GuiGraphics graphics) {
         super.renderBackground(graphics);
         header(graphics, Component.translatable("screen.veriborder.modifier").getString(),
@@ -724,16 +841,17 @@ public class ModifierScreen extends VeriScreen {
         graphics.drawString(font, Ui.ellipsis(Component.translatable("screen.veriborder.modifier.style_hint",
                 Component.translatable(style.displayNameKey()).getString()).getString(), 340), left + 174, top + 224,
                 Ui.MUTED, false);
-        graphics.fill(left + 444, top + 276, left + 460, top + 292,
-                data.accentColor() | 0xFF000000);
-        graphics.renderOutline(left + 444, top + 276, 16, 16, Ui.BORDER);
+        // Shared palette picker (opened panels are painted by render()'s overlay).
+        if (colorPicker != null && !colorPicker.open()) {
+            colorPicker.draw(graphics, font, accent);
+        }
     }
 
     private void drawVisaTab(GuiGraphics graphics) {
         drawRecordList(graphics, visaTags(), visaSelected, true);
         if (editingVisa) {
             drawRecordEditorFrame(graphics, true);
-        } else if (DocumentData.fromTag(working).kind() == DocumentKind.PASSPORT) {
+        } else if (DocumentData.fromTag(working).kind() != DocumentKind.ID_CARD) {
             drawVisaFreePanel(graphics);
         } else {
             Ui.inset(graphics, left + 350, top + 80, 152, 200);
@@ -741,35 +859,47 @@ public class ModifierScreen extends VeriScreen {
                     left + 362, top + 94, 130, Ui.MUTED);
             if (visaSelected >= 0 && visaSelected < visaTags().size()) {
                 CompoundTag visa = visaTags().get(visaSelected);
+                CredentialState state = VisaRecord.fromTag(visa).state();
                 Ui.clipped(graphics, visa.getString("country"), left + 362, top + 114, 132, Ui.TEXT);
-                Ui.clipped(graphics, Component.translatable("record.veriborder.status."
-                        + visa.getString("status").toLowerCase(Locale.ROOT)), left + 362, top + 128, 132, Ui.DIM);
+                Ui.clipped(graphics, Component.translatable(state.translationKey()), left + 362, top + 128,
+                        132, state.color());
             }
         }
     }
 
     private void drawVisaFreePanel(GuiGraphics graphics) {
-        // Only the header/list strip gets an inset; the code field below keeps
-        // the standard field chrome drawn by VeriScreen.
-        Ui.inset(graphics, left + 350, top + 80, 152, 64);
+        int x = left + 350;
+        int listTop = top + 80;
+        int listHeight = 148;
+        Ui.inset(graphics, x, listTop, 152, listHeight);
         graphics.drawString(font, Component.translatable("screen.veriborder.modifier.visa_free"),
-                left + 358, top + 86, accent, false);
+                x + 8, listTop + 6, accent, false);
         List<String> codes = visaFreeCodes();
+        int rowHeight = 12;
+        int visible = 10;
+        visaFreeScroll = Math.min(visaFreeScroll, Math.max(0, codes.size() - visible));
+        Ui.scissor(graphics, x + 2, listTop + 18, x + 150, listTop + listHeight - 2);
+        for (int i = 0; i < visible && visaFreeScroll + i < codes.size(); i++) {
+            int index = visaFreeScroll + i;
+            int rowY = listTop + 18 + i * rowHeight;
+            boolean selected = index == visaFreeSelected;
+            if (selected) {
+                graphics.fill(x + 3, rowY, x + 149, rowY + rowHeight - 1, 0xFF243A50);
+                graphics.fill(x + 3, rowY, x + 5, rowY + rowHeight - 1, Ui.GOLD);
+            }
+            graphics.drawString(font, codes.get(index), x + 9, rowY + 2, selected ? Ui.TEXT : Ui.MUTED, false);
+        }
+        graphics.disableScissor();
         if (codes.isEmpty()) {
             graphics.drawString(font, Component.translatable("screen.veriborder.modifier.visa_free_empty"),
-                    left + 358, top + 101, Ui.DIM, false);
-        } else {
-            int start = Math.max(0, codes.size() - 4);
-            for (int i = start; i < codes.size(); i++) {
-                graphics.drawString(font, codes.get(i), left + 358, top + 101 + (i - start) * 11,
-                        Ui.TEXT, false);
-            }
+                    x + 8, listTop + 24, Ui.DIM, false);
+        } else if (codes.size() > visible) {
+            graphics.drawString(font, "↕", x + 140, listTop + listHeight - 12, Ui.DIM, false);
         }
         if (!visaFreeError.isBlank()) {
-            Ui.clipped(graphics, Component.translatable(visaFreeError), left + 358, top + 146, 136, Ui.RED);
+            Ui.clipped(graphics, Component.translatable(visaFreeError), x + 8, top + 312, 140, Ui.RED);
         } else {
-            Ui.clipped(graphics, Component.translatable("hint.veriborder.code_8"),
-                    left + 358, top + 146, 136, Ui.DIM);
+            Ui.clipped(graphics, Component.translatable("hint.veriborder.codes_select"), x + 8, top + 312, 140, Ui.DIM);
         }
     }
 
@@ -861,14 +991,35 @@ public class ModifierScreen extends VeriScreen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        double uiX = toUiX(mouseX);
+        double uiY = toUiY(mouseY);
+        // 26.4: an open dropdown owns the click, including dismissal clicks.
+        if (dropdownClick(uiX, uiY)) {
+            return true;
+        }
+        // An open palette owns the click even where a button sits underneath,
+        // except for its own RGB input (a real widget).
+        if (colorPicker != null && colorPicker.open()) {
+            if (colorPicker.overHexField(uiX, uiY)) {
+                return super.mouseClicked(mouseX, mouseY, button);
+            }
+            if (colorPicker.mouseClicked(uiX, uiY)) {
+                if (!colorPicker.open()) {
+                    commitCustomStyle();
+                    rebuildWidgets();
+                }
+                return true;
+            }
+        }
         if (super.mouseClicked(mouseX, mouseY, button)) {
             return true;
         }
         if (working == null) {
             return false;
         }
-        double uiX = toUiX(mouseX);
-        double uiY = toUiY(mouseY);
+        if (colorPicker != null && colorPicker.mouseClicked(uiX, uiY)) {
+            return true;
+        }
         int listX = left + 10;
         int listY = top + 50;
         if (uiX >= listX && uiX <= listX + 150 && uiY >= listY + 18 && uiY <= listY + 266) {
@@ -885,6 +1036,14 @@ public class ModifierScreen extends VeriScreen {
             }
         }
         if (tab == TAB_VISAS || tab == TAB_ENDORSEMENTS) {
+            if (tab == TAB_VISAS && !editingVisa
+                    && DocumentData.fromTag(working).kind() != DocumentKind.ID_CARD) {
+                int codeRow = visaFreeRowAt(uiX, uiY);
+                if (codeRow >= 0) {
+                    visaFreeSelected = codeRow;
+                    return true;
+                }
+            }
             int row = recordRowAt(uiX, uiY);
             List<CompoundTag> records = tab == TAB_VISAS ? visaTags() : endorsementTags();
             if (row >= 0 && row < records.size()) {
@@ -915,6 +1074,17 @@ public class ModifierScreen extends VeriScreen {
         return row >= 0 && row < 7 ? row : -1;
     }
 
+    /** Row under the mouse in the permanent-code list (right-hand visa panel). */
+    private int visaFreeRowAt(double mouseX, double mouseY) {
+        int x = left + 350;
+        int y = top + 98;
+        if (mouseX < x + 3 || mouseX > x + 149 || mouseY < y || mouseY > y + 10 * 12) {
+            return -1;
+        }
+        int row = (int) ((mouseY - y) / 12) + visaFreeScroll;
+        return row >= 0 && row < visaFreeCodes().size() ? row : -1;
+    }
+
     private int stampRowAt(double mouseX, double mouseY) {
         int x = left + 174;
         int y = top + 80;
@@ -929,6 +1099,17 @@ public class ModifierScreen extends VeriScreen {
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
         double uiX = toUiX(mouseX);
         double uiY = toUiY(mouseY);
+        if (dropdownScroll(uiX, uiY, delta)) {
+            return true;
+        }
+        if (tab == TAB_VISAS && !editingVisa && working != null
+                && DocumentData.fromTag(working).kind() != DocumentKind.ID_CARD
+                && uiX >= left + 350 && uiX <= left + 502 && uiY >= top + 98 && uiY <= top + 228) {
+            int visible = 10;
+            visaFreeScroll = Math.max(0, Math.min(Math.max(0, visaFreeCodes().size() - visible),
+                    visaFreeScroll - (int) Math.signum(delta)));
+            return true;
+        }
         if (uiX >= left + 10 && uiX <= left + 160 && uiY >= top + 68 && uiY <= top + 316) {
             listScroll = Math.max(0, listScroll - (int) Math.signum(delta));
             return true;

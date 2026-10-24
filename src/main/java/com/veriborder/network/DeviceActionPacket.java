@@ -9,6 +9,10 @@ import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
+/**
+ * Client → server device action. Protocol 2: every field is null-safe on both
+ * ends ({@code readNbt()} may return null, {@code readUtf} returns "").
+ */
 public class DeviceActionPacket {
     private final BlockPos pos;
     private final String action;
@@ -16,17 +20,14 @@ public class DeviceActionPacket {
     private final int slot;
 
     public DeviceActionPacket(BlockPos pos, String action, CompoundTag data, int slot) {
-        this.pos = pos;
-        this.action = action;
-        this.data = data;
+        this.pos = pos == null ? BlockPos.ZERO : pos;
+        this.action = action == null ? "" : action;
+        this.data = data == null ? new CompoundTag() : data;
         this.slot = slot;
     }
 
     public DeviceActionPacket(FriendlyByteBuf buffer) {
-        this.pos = buffer.readBlockPos();
-        this.action = buffer.readUtf(64);
-        this.data = buffer.readNbt();
-        this.slot = buffer.readVarInt();
+        this(buffer.readBlockPos(), buffer.readUtf(64), buffer.readNbt(), buffer.readVarInt());
     }
 
     public void encode(FriendlyByteBuf buffer) {
@@ -41,9 +42,26 @@ public class DeviceActionPacket {
         ctx.enqueueWork(() -> {
             ServerPlayer player = ctx.getSender();
             if (player != null) {
-                DeviceService.handleAction(player, pos, action, data == null ? new CompoundTag() : data, slot);
+                DeviceService.handleAction(player, pos, action, data, slot);
             }
         });
         ctx.setPacketHandled(true);
+    }
+
+    public BlockPos pos() {
+        return pos;
+    }
+
+    public String action() {
+        return action;
+    }
+
+    /** Never {@code null}. */
+    public CompoundTag data() {
+        return data;
+    }
+
+    public int slot() {
+        return slot;
     }
 }

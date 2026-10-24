@@ -66,7 +66,7 @@ public class PrintPreviewScreen extends VeriScreen {
             graphics.drawString(font, doc.mrz2(), 0, 14, Ui.MUTED, false);
             graphics.pose().popPose();
         }
-        String watermark = "VERIBORDER · OFFICIAL DOCUMENT PREVIEW";
+        String watermark = Component.translatable("screen.veriborder.print.watermark").getString();
         graphics.drawString(font, watermark, left + 24, top + imageHeight - 28, 0x33FFFFFF, false);
     }
 

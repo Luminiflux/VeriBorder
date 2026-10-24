@@ -110,14 +110,25 @@ public enum DocStyle {
     }
 
     public static DocStyle byId(String id) {
+        DocStyle style = byIdOrNull(id);
+        return style == null ? CN_ID : style;
+    }
+
+    /**
+     * Strict resolution (26.4): a blank or unknown layout id returns {@code null}
+     * instead of silently becoming {@link #CN_ID}. Registry templates use this to
+     * tell "the stored style is wrong" apart from "the style is the first one".
+     */
+    public static DocStyle byIdOrNull(String id) {
         if (id != null) {
+            String key = id.trim();
             for (DocStyle style : values()) {
-                if (style.id.equals(id)) {
+                if (style.id.equals(key)) {
                     return style;
                 }
             }
         }
-        return CN_ID;
+        return null;
     }
 
     public static List<DocStyle> forKind(DocumentKind kind) {

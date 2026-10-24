@@ -28,6 +28,11 @@ public final class ClientPacketHandler {
         if (data == null) {
             return;
         }
+        if ("registry".equals(device)) {
+            // Credential registry ("注册器") snapshot + admin flag.
+            Minecraft.getInstance().setScreen(new com.veriborder.client.screen.RegistryScreen(data));
+            return;
+        }
         if ("modifier".equals(device)) {
             if (data.getList("docs", CompoundTag.TAG_COMPOUND).isEmpty()) {
                 Minecraft.getInstance().setScreen(new com.veriborder.client.screen.GeneratorScreen());
@@ -38,8 +43,9 @@ public final class ClientPacketHandler {
         }
         if ("config".equals(device)) {
             // Brush-only terminal configuration, sent by DeviceService.openConfig.
+            // A dual gate is redirected to the shared dual-gate editor (device mode).
             DeviceType configType = DeviceType.byId(data.getString("deviceType"));
-            Minecraft.getInstance().setScreen(new DeviceConfigScreen(configType, pos, data, data.getInt("slot")));
+            DeviceConfigScreen.open(configType, pos, data, data.getInt("slot"));
             return;
         }
         if (data.getBoolean("officer") && isOfficerConsole(device, data)) {

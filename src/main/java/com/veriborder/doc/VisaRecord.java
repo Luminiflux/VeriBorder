@@ -78,20 +78,38 @@ public record VisaRecord(
     }
 
     public int remainingEntries() {
-        return entries <= 0 ? Integer.MAX_VALUE : Math.max(0, entries - usedEntries);
+        return CredentialState.remaining(entries, usedEntries);
     }
 
+    /** Derived state against today (exhausted / expired / revoked / valid). */
+    public CredentialState state() {
+        return state(LocalDate.now());
+    }
+
+    /** Date-injectable derived state (tests and date-sensitive screens). */
+    public CredentialState state(LocalDate on) {
+        return CredentialState.derive(status, entries, usedEntries, expiryDate, on);
+    }
+
+    /** UI colour of the derived state. */
+    public int stateColor() {
+        return state().color();
+    }
+
+    /**
+     * A record may be used at a gate only when its derived state is
+     * {@link CredentialState#VALID} - which already implies a positive entry
+     * budget - and it has already been issued.
+     */
     public boolean active() {
         return active(LocalDate.now());
     }
 
     public boolean active(LocalDate on) {
         LocalDate issued = DateUtil.parseOrNull(issueDate);
-        return ACTIVE.equalsIgnoreCase(status)
+        return state(on) == CredentialState.VALID
                 && issued != null
-                && !issued.isAfter(on)
-                && !DateUtil.expiredOn(expiryDate, on)
-                && remainingEntries() > 0;
+                && !issued.isAfter(on);
     }
 
     public String entriesText() {

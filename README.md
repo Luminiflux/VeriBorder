@@ -12,7 +12,7 @@ saves.
 - Minecraft 1.20.1
 - Forge 47.x
 - Java 17
-- Version **26.1**
+- Version **26.2**
 
 ## Documents
 
@@ -91,16 +91,26 @@ saves.
 - **Hotel Check-in Card Reader**, **Desktop Document Scanner**, **Manual Verification
   Terminal**, **Airport Boarding Verification Gate**, **Station Real-name Verifier**.
 - **Border Self-service E-Gate** and **Border Exit E-Gate**:
-  - 20 px single-lane barrier, two cabinets, 12 px passage, 16 px waist-high body;
-  - two framed glass wings animated with smoothstep + partial-tick interpolation;
+  - split dual-pillar design: white body, dark curved top cap, vertical reader screen,
+    cyan LED strip and green direction arrow;
+  - 12 px clear passage, 20 px overall width, full-height collision wall;
+  - real animated glass door: two framed glass leaves slide smoothly into the pillars when
+    the gate opens and meet in the centre when closed;
   - status lights, scan beam, sounds and particles;
-  - full-height collision wall to prevent jumping over the gate;
   - unlimited 8-digit code list, batch code entry, four modes;
   - optional automatic entry/exit stamps.
 
+## Gate configuration brush
+
+- A creative-only **Gate Configuration Brush** stores one complete gate setup in its NBT:
+  port name, country, inspecting officer, gate mode, code list, auto-stamp and overstay days.
+- Sneak + right-click opens the brush editor (the same fields as the gate's own config
+  screen); right-click a gate to copy the stored config into it. OP level 2 required.
+
 ## Machines and recipes
 
-- **21 machines** with 21 block models, 21 blockstates, 254 block textures and 24 recipes.
+- **21 machines** with 21 block models, 21 blockstates and 24 recipes; every device model is
+  authored in Blender and exported to Minecraft block models.
 - **Device Configuration Brush** and **Universal Document Modifier** are creative-only admin
   tools and require OP level 2 for configuration/modification actions.
 - Self-service kiosks, gates and terminals remain craftable; servers can place them in

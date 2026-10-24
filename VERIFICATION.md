@@ -4,6 +4,62 @@ Date: 2026-10-17
 Environment: Minecraft 1.20.1 / Forge 47.2.0 / Java 17.0.20.1 (Azul)  
 Project: `C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder`
 
+## 26.2 gate redesign / Blender models / config brush verification
+
+```text
+DocumentCoreTest    46
+BorderDataTest      13
+VisaLockTest        10
+total               69 tests, 0 failures (two-stage removed)
+```
+
+```text
+tools/preview_models.js: 21 models, 304 textures, FAILURES: none
+Blender models: 21 devices (assets/blender/<id>/*.blend, .obj, preview.png)
+gate: dual-pillar shell (egate.json 87 els / exit_gate.json 83 els)
+gate door: animated in EGateRenderer — two framed frosted-glass leaves slide into
+           the pillars on open; closed state visually blocks the 12 px passage
+config brush: port/country/officer/mode/codes/autoStamp/overstay; OP level 2
+```
+
+Client screenshot: closed gate shows a clear cyan frosted glass door blocking the
+passage (magenta=0).
+
+---
+
+## 26.1.1 gate redesign / two-stage / config brush verification
+
+```text
+DocumentCoreTest    46
+BorderDataTest      13
+VisaLockTest        10
+TwoStageBorderTest  15
+total               84 tests, 0 failures
+```
+
+Real Forge client (`Gate261Smoke`):
+
+```text
+document stage: pending created, no session, no stamp, ALLOW_DOCUMENT log
+re-entry while pending: denied (PENDING_EXISTS)
+identity stage: session created, pending cleared, IN stamp, owner enrolled
+exit: consumes one entry, clears session, IN+OUT stamps
+identity without pending: denied; owner mismatch: denied; blank owner: enrolled
+legacy one-stage gate: session created directly
+gate config brush: applied mode/codes/stage/autoStamp/overstay to a target gate
+```
+
+Model/graphics:
+
+```text
+tools/preview_models.js: 23 models, 262 textures, FAILURES: none
+gate: split dual-pillar (white body, dark curved top, tablet screen, cyan LED,
+      green arrow), visible framed glass door in closed state, retracted when open
+client screenshot: closed door visible and blocking the passage, magenta=0
+```
+
+---
+
 ## 26.1 formal release verification
 
 ```text

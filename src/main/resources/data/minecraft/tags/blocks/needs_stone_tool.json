@@ -12,6 +12,7 @@
                    "veriborder:airport_checkin",
                    "veriborder:station_verifier",
                    "veriborder:egate",
+                   "veriborder:dual_gate",
                    "veriborder:entry_stamp",
                    "veriborder:exit_stamp",
                    "veriborder:stamp_history",

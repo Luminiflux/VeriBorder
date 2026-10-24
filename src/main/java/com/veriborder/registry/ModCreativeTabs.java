@@ -43,6 +43,11 @@ public final class ModCreativeTabs {
         addSample(event, DocStyle.HK_MACAO_PERMIT);
         event.accept(ModItems.DOCUMENT_MODIFIER.get());
         event.accept(ModItems.DEVICE_BRUSH.get());
+        event.accept(ModItems.GATE_CONFIG_BRUSH.get());
+        event.accept(ModItems.DUAL_GATE_BRUSH.get());
+        event.accept(ModItems.CONFIG_COPY_BRUSH.get());
+        event.accept(ModItems.BORDER_TERMINAL.get());
+        event.accept(ModItems.CREDENTIAL_REGISTRY.get());
         for (var entry : ModItems.DEVICE_ITEMS.values()) {
             if (entry.isPresent()) {
                 event.accept(entry.get());

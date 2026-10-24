@@ -1,0 +1,13 @@
+﻿{
+    "id":  "print_preview",
+    "model_json":  "C:\\Users\\GhostBubbles\\Documents\\deepseek-harness\\default-workspace\\VeriBorder\\src\\main\\resources\\assets\\veriborder\\models\\block\\print_preview.json",
+    "out_dir":  "C:\\Users\\GhostBubbles\\Documents\\deepseek-harness\\default-workspace\\VeriBorder\\assets\\blender\\print_preview",
+    "palette":  {
+                    "base":  "#EDEDEA",
+                    "base2":  "#DADAD4",
+                    "trim":  "#4A4A45",
+                    "accent":  "#D9534F",
+                    "fg":  "#FFB4AE",
+                    "bg":  "#141414"
+                }
+}

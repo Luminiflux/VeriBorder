@@ -1,12 +1,13 @@
 package com.veriborder.doc;
 
 import com.veriborder.block.DeviceType;
+import com.veriborder.border.BorderEntry;
 import com.veriborder.border.BorderLog;
 import com.veriborder.border.BorderService;
-import com.veriborder.border.BorderSession;
 import com.veriborder.border.BorderTravelData;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -19,91 +20,140 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Border data tests (26.1): session/log NBT round-trips, the 500-entry log cap,
- * overstay arithmetic, single-session-per-player and permit stamp acceptance.
- * All of these run without a world because {@link BorderTravelData} only
+ * Border data tests (26.3): entry/log NBT round-trips, the 500-entry log cap,
+ * overstay arithmetic, one entry per person, the document index and permit
+ * stamp acceptance.
+ *
+ * <p>All of these run without a world because {@link BorderTravelData} only
  * serialises to NBT; the overworld storage is resolved through
- * {@code BorderTravelData.get(server)} at runtime.
+ * {@code BorderTravelData.get(server)} at runtime.</p>
  */
 class BorderDataTest {
     private static final UUID TRAVELLER = UUID.fromString("11111111-2222-3333-4444-555555555555");
-    private static final long DAY = BorderSession.MILLIS_PER_DAY;
+    private static final long DAY = BorderEntry.MILLIS_PER_DAY;
+    private static final String PERSON = "张三|1990-01-01";
 
     @Test
-    void borderSessionRoundTripsThroughNbt() {
+    void borderEntryRoundTripsThroughNbt() {
         long entry = 1_700_000_000_000L;
-        BorderSession session = new BorderSession(TRAVELLER, "张三", "E12345678", "V-ABC12345",
-                "12345678", BorderSession.KIND_VISA, "minecraft:overworld",
-                new BlockPos(10, 64, -3), entry, "北京首都国际机场 T3", 30, true);
+        BorderEntry record = new BorderEntry(PERSON, "E12345678", "张三", "V-ABC12345",
+                "12345678", BorderEntry.KIND_VISA, "minecraft:overworld",
+                new BlockPos(10, 64, -3), entry, "北京首都国际机场 T3", 30, true, TRAVELLER, "ALEX");
 
-        CompoundTag tag = session.toTag();
-        assertTrue(tag.contains("player"));
+        CompoundTag tag = record.toTag();
+        assertTrue(tag.contains("personKey"));
         assertTrue(tag.contains("document"));
         assertEquals(entry, tag.getLong("entryTime"));
+        assertEquals(TRAVELLER, tag.getUUID("player"));
 
-        BorderSession loaded = BorderSession.fromTag(tag);
+        BorderEntry loaded = BorderEntry.fromTag(tag);
         assertNotNull(loaded);
-        assertEquals(session, loaded);
-        assertEquals(session.playerName(), loaded.playerName());
-        assertEquals(session.gatePos(), loaded.gatePos());
-        assertEquals(session.port(), loaded.port());
-        assertTrue(loaded.overstay());
+        assertEquals(record, loaded);
+        assertEquals(record.personKey(), loaded.personKey());
+        assertEquals(record.holder(), loaded.holder());
+        assertEquals(record.gatePos(), loaded.gatePos());
+        assertEquals(record.port(), loaded.port());
+        assertEquals("ALEX", loaded.playerName());
+        assertTrue(loaded.overstayed());
         assertTrue(loaded.consumesRecord());
     }
 
     @Test
-    void officerSessionTagKeepsTheDocumentedFields() {
-        BorderSession session = new BorderSession(TRAVELLER, "张三", "E12345678", "V-ABC12345",
-                "12345678", BorderSession.KIND_VISA, "minecraft:overworld", new BlockPos(1, 2, 3),
-                1_700_000_000_000L, "北京首都国际机场 T3", 30, false);
-        CompoundTag officer = session.toOfficerTag();
-        for (String key : List.of("player", "playerName", "document", "kind", "code",
+    void officerEntryTagKeepsTheDocumentedFields() {
+        BorderEntry record = new BorderEntry(PERSON, "E12345678", "张三", "V-ABC12345",
+                "12345678", BorderEntry.KIND_VISA, "minecraft:overworld", new BlockPos(1, 2, 3),
+                1_700_000_000_000L, "北京首都国际机场 T3", 30, false, TRAVELLER, "ALEX");
+        CompoundTag officer = record.toOfficerTag();
+        for (String key : List.of("player", "playerName", "personKey", "document", "holder", "kind", "code",
                 "gateX", "gateY", "gateZ", "dimension", "entryTime", "overstay", "overstayDays")) {
-            assertTrue(officer.contains(key), "officer session key " + key);
+            assertTrue(officer.contains(key), "officer entry key " + key);
         }
         // Internal binding stays on the server.
         assertFalse(officer.contains("recordId"));
     }
 
     @Test
-    void borderTravelDataRoundTripsSessionsAndLogs() {
+    void borderTravelDataRoundTripsEntriesAndLogs() {
         BorderTravelData data = new BorderTravelData();
-        BorderSession first = new BorderSession(TRAVELLER, "张三", "E12345678", "V-1",
-                "12345678", BorderSession.KIND_VISA, "minecraft:overworld", new BlockPos(0, 64, 0),
-                1_700_000_000_000L, "北京首都国际机场 T3", 30, false);
+        BorderEntry first = new BorderEntry(PERSON, "E12345678", "张三", "V-1",
+                "12345678", BorderEntry.KIND_VISA, "minecraft:overworld", new BlockPos(0, 64, 0),
+                1_700_000_000_000L, "北京首都国际机场 T3", 30, false, TRAVELLER, "ALEX");
         UUID second = UUID.fromString("99999999-8888-7777-6666-555555555555");
-        BorderSession other = new BorderSession(second, "李四", "P-87654321", "", "87654321",
-                BorderSession.KIND_VISA_FREE, "minecraft:overworld", new BlockPos(5, 64, 5),
-                1_700_000_500_000L, "上海浦东国际机场 T2", 15, true);
-        data.putSession(first);
-        data.putSession(other);
-        data.addLog(new BorderLog(1_700_000_100_000L, TRAVELLER, "张三", BorderLog.IN,
-                BorderLog.ALLOW_IN, "E12345678", "12345678", BorderSession.KIND_VISA,
+        BorderEntry other = new BorderEntry("李四|1988-02-02", "P-87654321", "李四", "", "87654321",
+                BorderEntry.KIND_VISA_FREE, "minecraft:overworld", new BlockPos(5, 64, 5),
+                1_700_000_500_000L, "上海浦东国际机场 T2", 15, true, second, "BOB");
+        data.putEntry(first);
+        data.putEntry(other);
+        data.addLog(new BorderLog(1_700_000_100_000L, TRAVELLER, "ALEX", BorderLog.IN,
+                BorderLog.ALLOW_IN, "E12345678", "12345678", BorderEntry.KIND_VISA,
                 "minecraft:overworld@0,64,0", ""));
-        data.addLog(new BorderLog(1_700_000_200_000L, TRAVELLER, "张三", BorderLog.IN,
-                BorderLog.DENY_IN, "E12345678", "12345678", BorderSession.KIND_VISA,
+        data.addLog(new BorderLog(1_700_000_200_000L, TRAVELLER, "ALEX", BorderLog.IN,
+                BorderLog.DENY_IN, "E12345678", "12345678", BorderEntry.KIND_VISA,
                 "minecraft:overworld@0,64,0", BorderService.REASON_ALREADY_ENTERED));
 
         CompoundTag saved = data.save(new CompoundTag());
-        assertTrue(saved.contains("sessions"));
+        assertEquals(3, saved.getInt("schema"));
+        assertTrue(saved.contains("entries"));
         assertTrue(saved.contains("logs"));
+        assertFalse(saved.contains("sessions"), "26.3 no longer writes per-player sessions");
 
         BorderTravelData loaded = BorderTravelData.load(saved);
-        assertEquals(2, loaded.sessionCount());
-        assertEquals(first, loaded.session(TRAVELLER));
-        assertEquals(other, loaded.session(second));
+        assertEquals(2, loaded.entryCount());
+        assertEquals(first, loaded.entry(PERSON));
+        assertEquals(other, loaded.entry("李四|1988-02-02"));
         assertEquals(2, loaded.logCount());
         assertEquals(data.logs(), loaded.logs());
         assertEquals(BorderLog.ALLOW_IN, loaded.logs().get(0).result());
         assertEquals(BorderLog.DENY_IN, loaded.logs().get(1).result());
         assertEquals(BorderService.REASON_ALREADY_ENTERED, loaded.logs().get(1).detail());
+        // The document index is a pure function of the entries.
+        assertEquals(first, loaded.entryByDocument("E12345678"));
+        assertEquals(other, loaded.entryByDocument("P-87654321"));
+        assertEquals(PERSON, loaded.personKeyForDocument("E12345678"));
+    }
+
+    @Test
+    void prePersonKeySessionsAreMigrated() {
+        // Exactly the 26.2 "sessions" layout: one compound per player, no person key.
+        CompoundTag legacy = new CompoundTag();
+        legacy.putInt("schema", 2);
+        ListTag sessions = new ListTag();
+        CompoundTag session = new CompoundTag();
+        session.putUUID("player", TRAVELLER);
+        session.putString("playerName", "ALEX");
+        session.putString("document", "E12345678");
+        session.putString("holder", "张三");
+        session.putString("recordId", "V-1");
+        session.putString("code", "12345678");
+        session.putString("kind", BorderEntry.KIND_VISA);
+        session.putString("dimension", "minecraft:overworld");
+        session.putInt("gateX", 1);
+        session.putInt("gateY", 64);
+        session.putInt("gateZ", 2);
+        session.putLong("entryTime", 1_700_000_000_000L);
+        session.putString("port", "Beijing");
+        session.putInt("overstayDays", 30);
+        session.putBoolean("overstay", false);
+        sessions.add(session);
+        legacy.put("sessions", sessions);
+
+        BorderTravelData migrated = BorderTravelData.load(legacy);
+        assertEquals(1, migrated.entryCount());
+        BorderEntry entry = migrated.entries().get(0);
+        assertNotNull(entry);
+        assertEquals("张三|E12345678", entry.personKey(),
+                "a session without a person key falls back to holder + document number");
+        assertEquals(TRAVELLER, entry.player());
+        assertEquals("ALEX", entry.playerName());
+        assertEquals(entry, migrated.entryForPlayer(TRAVELLER));
+        assertEquals(entry, migrated.entryByDocument("E12345678"));
     }
 
     @Test
     void emptyOrMissingTagLoadsAnEmptyStore() {
-        assertEquals(0, BorderTravelData.load(new CompoundTag()).sessionCount());
+        assertEquals(0, BorderTravelData.load(new CompoundTag()).entryCount());
         assertEquals(0, BorderTravelData.load(new CompoundTag()).logCount());
-        assertEquals(0, BorderTravelData.load(null).sessionCount());
+        assertEquals(0, BorderTravelData.load(null).entryCount());
     }
 
     @Test
@@ -111,8 +161,8 @@ class BorderDataTest {
         BorderTravelData data = new BorderTravelData();
         int total = BorderTravelData.MAX_LOGS + 25;
         for (int i = 1; i <= total; i++) {
-            data.addLog(new BorderLog(i, TRAVELLER, "张三", BorderLog.IN, BorderLog.ALLOW_IN,
-                    "E12345678", "", BorderSession.KIND_ALL, "", ""));
+            data.addLog(new BorderLog(i, TRAVELLER, "ALEX", BorderLog.IN, BorderLog.ALLOW_IN,
+                    "E12345678", "", BorderEntry.KIND_NONE, "", ""));
         }
         assertEquals(BorderTravelData.MAX_LOGS, data.logCount());
         // Oldest 25 were dropped; the retained window starts at 26.
@@ -131,78 +181,85 @@ class BorderDataTest {
     void overstayUsesEntryGateDaysAndIsStrict() {
         long now = 1_800_000_000_000L;
         // Exactly the allowance is still on time.
-        BorderSession onTime = sessionEnteredAt(now - 30 * DAY, 30);
+        BorderEntry onTime = enteredAt(now - 30 * DAY, 30);
         assertFalse(onTime.overstayed(now));
         assertEquals(0, onTime.daysOverstayed(now));
 
-        BorderSession oneMillisLate = sessionEnteredAt(now - 30 * DAY - 1, 30);
+        BorderEntry oneMillisLate = enteredAt(now - 30 * DAY - 1, 30);
         assertTrue(oneMillisLate.overstayed(now));
         assertEquals(1, oneMillisLate.daysOverstayed(now));
 
-        BorderSession oneDayLate = sessionEnteredAt(now - 31 * DAY, 30);
+        BorderEntry oneDayLate = enteredAt(now - 31 * DAY, 30);
         assertTrue(oneDayLate.overstayed(now));
         assertEquals(1, oneDayLate.daysOverstayed(now));
 
-        BorderSession twoDaysLate = sessionEnteredAt(now - 32 * DAY, 30);
+        BorderEntry twoDaysLate = enteredAt(now - 32 * DAY, 30);
         assertEquals(2, twoDaysLate.daysOverstayed(now));
 
         // The allowance captured at entry wins over the default.
-        BorderSession shortStay = sessionEnteredAt(now - 2 * DAY, 1);
+        BorderEntry shortStay = enteredAt(now - 2 * DAY, 1);
         assertTrue(shortStay.overstayed(now));
-        BorderSession longStay = sessionEnteredAt(now - 20 * DAY, 90);
+        BorderEntry longStay = enteredAt(now - 20 * DAY, 90);
         assertFalse(longStay.overstayed(now));
 
         // Zero days means the traveller is late one millisecond after entry.
-        assertTrue(sessionEnteredAt(now - 1, 0).overstayed(now));
+        assertTrue(enteredAt(now - 1, 0).overstayed(now));
     }
 
     @Test
-    void sessionDaysAreClampedAndDeadlineIsExact() {
-        BorderSession session = new BorderSession(TRAVELLER, "张三", "E1", "", "",
-                BorderSession.KIND_ALL, "minecraft:overworld", BlockPos.ZERO, 1_000L, "", -5, false);
-        assertEquals(0, session.overstayDays());
-        BorderSession capped = new BorderSession(TRAVELLER, "张三", "E1", "", "",
-                BorderSession.KIND_ALL, "minecraft:overworld", BlockPos.ZERO, 1_000L, "", 99_999, false);
-        assertEquals(BorderSession.MAX_OVERSTAY_DAYS, capped.overstayDays());
-        assertEquals(1_000L + 30 * DAY, sessionEnteredAt(1_000L, 30).overstayDeadlineMillis());
+    void entryDaysAreClampedAndDeadlineIsExact() {
+        BorderEntry entry = new BorderEntry(PERSON, "E1", "张三", "", "",
+                BorderEntry.KIND_NONE, "minecraft:overworld", BlockPos.ZERO, 1_000L, "", -5, false);
+        assertEquals(0, entry.overstayDays());
+        BorderEntry capped = new BorderEntry(PERSON, "E1", "张三", "", "",
+                BorderEntry.KIND_NONE, "minecraft:overworld", BlockPos.ZERO, 1_000L, "", 99_999, false);
+        assertEquals(BorderEntry.MAX_OVERSTAY_DAYS, capped.overstayDays());
+        assertEquals(1_000L + 30 * DAY, enteredAt(1_000L, 30).overstayDeadlineMillis());
     }
 
     @Test
-    void oneSessionPerPlayerIsReplacedNotDuplicated() {
+    void oneEntryPerPersonIsReplacedNotDuplicated() {
         BorderTravelData data = new BorderTravelData();
-        BorderSession first = new BorderSession(TRAVELLER, "张三", "E1", "", "",
-                BorderSession.KIND_ALL, "minecraft:overworld", BlockPos.ZERO, 1_000L, "", 30, false);
-        BorderSession second = new BorderSession(TRAVELLER, "张三", "E2", "V-9",
-                "99999999", BorderSession.KIND_VISA, "minecraft:overworld", BlockPos.ZERO, 2_000L, "", 30, false);
-        data.putSession(first);
-        data.putSession(second);
-        assertEquals(1, data.sessionCount());
-        assertEquals(second, data.session(TRAVELLER));
-        assertEquals(second, data.clearSession(TRAVELLER));
-        assertNull(data.session(TRAVELLER));
-        assertNull(data.clearSession(TRAVELLER));
-        assertEquals(0, data.sessionCount());
+        BorderEntry first = new BorderEntry(PERSON, "E1", "张三", "", "",
+                BorderEntry.KIND_NONE, "minecraft:overworld", BlockPos.ZERO, 1_000L, "", 30, false);
+        BorderEntry second = new BorderEntry(PERSON, "E2", "张三", "V-9",
+                "99999999", BorderEntry.KIND_VISA, "minecraft:overworld", BlockPos.ZERO, 2_000L, "", 30, false);
+        data.putEntry(first);
+        data.putEntry(second);
+        assertEquals(1, data.entryCount(), "one person can only have one active entry");
+        assertEquals(second, data.entry(PERSON));
+        // The person moved to a new document: the old number no longer resolves,
+        // the new one does.
+        assertNull(data.entryByDocument("E1"));
+        assertEquals(second, data.entryByDocument("E2"));
+        assertEquals(second, data.removeEntry(PERSON));
+        assertNull(data.entry(PERSON));
+        assertNull(data.removeEntry(PERSON));
+        assertEquals(0, data.entryCount());
     }
 
     @Test
-    void sessionsAreListedNewestEntryFirst() {
+    void entriesAreListedNewestEntryFirst() {
         BorderTravelData data = new BorderTravelData();
-        BorderSession older = new BorderSession(TRAVELLER, "张三", "E1", "", "",
-                BorderSession.KIND_ALL, "minecraft:overworld", BlockPos.ZERO, 1_000L, "", 30, false);
-        BorderSession newer = new BorderSession(UUID.randomUUID(), "李四", "E2", "", "",
-                BorderSession.KIND_ALL, "minecraft:overworld", BlockPos.ZERO, 9_000L, "", 30, false);
-        data.putSession(older);
-        data.putSession(newer);
-        assertEquals(newer, data.sessions().get(0));
+        BorderEntry older = new BorderEntry(PERSON, "E1", "张三", "", "",
+                BorderEntry.KIND_NONE, "minecraft:overworld", BlockPos.ZERO, 1_000L, "", 30, false);
+        BorderEntry newer = new BorderEntry("李四|1991-01-01", "E2", "李四", "", "",
+                BorderEntry.KIND_NONE, "minecraft:overworld", BlockPos.ZERO, 9_000L, "", 30, false);
+        data.putEntry(older);
+        data.putEntry(newer);
+        assertEquals(newer, data.entries().get(0));
     }
 
     @Test
     void overstayFlagSurvivesTheRoundTrip() {
-        BorderSession session = sessionEnteredAt(1_000L, 30).withOverstay(true);
-        BorderSession loaded = BorderSession.fromTag(session.toTag());
+        BorderEntry entry = enteredAt(1_000L, 30).withOverstay(true);
+        BorderEntry loaded = BorderEntry.fromTag(entry.toTag());
         assertNotNull(loaded);
-        assertTrue(loaded.overstay());
-        assertFalse(sessionEnteredAt(1_000L, 30).overstay());
+        // The persisted flag is the record's state; overstayed() recomputes from
+        // the entry time, and this fixture entered in 1970, so it would always be
+        // true. Read the stored flag from the serialised form instead.
+        assertTrue(loaded.toTag().getBoolean("overstay"), "the persisted overstay flag round-trips");
+        assertFalse(enteredAt(1_000L, 30).toTag().getBoolean("overstay"));
     }
 
     @Test
@@ -228,6 +285,7 @@ class BorderDataTest {
         // A permit physically carries stamps like a passport does.
         permit.addStamp(StampRecord.IN, "北京首都国际机场 T3", "中国", "边检警官");
         assertEquals(1, permit.stamps().size());
+        assertTrue(permit.stamps().get(0).hasTime(), "26.3 stamps carry the clock time");
         assertTrue(permit.integrityValid());
         assertTrue(DocumentValidator.validate(permit, DeviceType.STAMP_HISTORY, "").valid());
     }
@@ -235,7 +293,7 @@ class BorderDataTest {
     @Test
     void exitGateIgnoresCodesAndMode() {
         DocumentData permit = DocumentFactory.sample(DocStyle.HK_MACAO_PERMIT);
-        // Exit reads the stored session; gate codes/mode must not block it.
+        // Exit reads the stored entry; gate codes/mode must not block it.
         assertTrue(DocumentValidator.validateGate(permit, DeviceType.EXIT_GATE, "visa",
                 List.of("99999999")).valid());
         assertTrue(DocumentValidator.validateGate(permit, DeviceType.EXIT_GATE, "endorsement",
@@ -248,46 +306,58 @@ class BorderDataTest {
         String visaCode = passport.visas().get(0).code();
         BorderService.EntryMatch visa = BorderService.resolveEntry(passport, "visa", List.of(visaCode));
         assertNotNull(visa);
-        assertEquals(BorderSession.KIND_VISA, visa.kind());
+        assertEquals(BorderEntry.KIND_VISA, visa.kind());
         assertEquals(passport.visas().get(0).id(), visa.recordId());
         assertEquals(visaCode, visa.code());
         assertNull(BorderService.resolveEntry(passport, "visa", List.of("99999999")));
+
+        // Wrong document kind or unmatched code resolves to nothing while the
+        // document has no permanent codes.
+        assertNull(BorderService.resolveEntry(passport, "endorsement", List.of(visaCode)));
+        assertNull(BorderService.resolveEntry(passport, "visa", List.of()));
 
         String freeCode = uniqueFreeCode(passport);
         assertTrue(passport.addVisaFreeCode(freeCode));
         BorderService.EntryMatch free = BorderService.resolveEntry(passport, "visa", List.of(freeCode));
         assertNotNull(free);
-        assertEquals(BorderSession.KIND_VISA_FREE, free.kind());
+        assertEquals(BorderEntry.KIND_VISA_FREE, free.kind());
         assertEquals("", free.recordId());
         assertEquals(freeCode, free.code());
 
-        // all never binds a record and never consumes.
-        BorderService.EntryMatch all = BorderService.resolveEntry(passport, "all", List.of());
-        assertNotNull(all);
-        assertEquals(BorderSession.KIND_ALL, all.kind());
-        assertFalse(new BorderSession(TRAVELLER, "张三", "E1", "", "", all.kind(),
-                "minecraft:overworld", BlockPos.ZERO, 1_000L, "", 30, false).consumesRecord());
+        // 26.3 permanent-code slot: a country-less (legacy) code is accepted by
+        // every mode, including endorsement and both.
+        assertEquals(BorderEntry.KIND_VISA_FREE,
+                BorderService.resolveEntry(passport, "endorsement", List.of(visaCode)).kind());
+        assertEquals(BorderEntry.KIND_VISA_FREE,
+                BorderService.resolveEntry(passport, "both", List.of()).kind());
+
+        // 26.3: the removed "all" mode normalises to both, so it no longer grants
+        // an entry without a credential. A fresh document with no permanent code
+        // and no gate code is refused.
+        DocumentData plain = DocumentFactory.sample(DocStyle.US_PASSPORT);
+        assertNull(BorderService.resolveEntry(plain, "all", List.of()));
+        assertNull(BorderService.resolveEntry(plain, "any", List.of()));
+        assertEquals(DocumentValidator.GATE_MODE_BOTH, DocumentValidator.normalizeMode("all"),
+                "the legacy all mode loads as both");
 
         DocumentData permit = DocumentFactory.sample(DocStyle.HK_MACAO_PERMIT);
         String endorsementCode = permit.endorsements().get(0).code();
         BorderService.EntryMatch endorsement = BorderService.resolveEntry(permit, "endorsement",
                 List.of(endorsementCode));
         assertNotNull(endorsement);
-        assertEquals(BorderSession.KIND_ENDORSEMENT, endorsement.kind());
+        assertEquals(BorderEntry.KIND_ENDORSEMENT, endorsement.kind());
         assertEquals(permit.endorsements().get(0).id(), endorsement.recordId());
-        assertEquals(BorderSession.KIND_ENDORSEMENT,
+        assertEquals(BorderEntry.KIND_ENDORSEMENT,
                 BorderService.resolveEntry(permit, "both", List.of(endorsementCode)).kind());
 
-        // Wrong document kind or unmatched code resolves to nothing.
+        // A permit without permanent codes still rejects a visa-mode check.
         assertNull(BorderService.resolveEntry(permit, "visa", List.of(endorsementCode)));
-        assertNull(BorderService.resolveEntry(passport, "endorsement", List.of(visaCode)));
-        assertNull(BorderService.resolveEntry(passport, "visa", List.of()));
     }
 
-    private static BorderSession sessionEnteredAt(long entryEpochMillis, int overstayDays) {
-        return new BorderSession(TRAVELLER, "张三", "E12345678", "V-1", "12345678",
-                BorderSession.KIND_VISA, "minecraft:overworld", new BlockPos(0, 64, 0),
-                entryEpochMillis, "北京首都国际机场 T3", overstayDays, false);
+    private static BorderEntry enteredAt(long entryEpochMillis, int overstayDays) {
+        return new BorderEntry(PERSON, "E12345678", "张三", "V-1", "12345678",
+                BorderEntry.KIND_VISA, "minecraft:overworld", new BlockPos(0, 64, 0),
+                entryEpochMillis, "北京首都国际机场 T3", overstayDays, false, TRAVELLER, "ALEX");
     }
 
     /** A visa-free code that cannot collide with the document's own codes. */

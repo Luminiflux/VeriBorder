@@ -4,14 +4,20 @@ import com.veriborder.block.DeviceType;
 import com.veriborder.client.BetterButton;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
+import com.veriborder.client.ui.Dropdown;
+import com.veriborder.client.ui.PagedList;
+import com.veriborder.client.ui.TabStrip;
 import com.veriborder.doc.DateUtil;
 import com.veriborder.doc.DocStyle;
+import com.veriborder.doc.DocumentData;
 import com.veriborder.doc.DocumentFactory;
 import com.veriborder.doc.DocumentKind;
 import com.veriborder.doc.EndorsementType;
 import com.veriborder.doc.VisaType;
 import com.veriborder.network.DeviceActionPacket;
 import com.veriborder.network.ModNetwork;
+import com.veriborder.registry.CredentialRegistryData;
+import com.veriborder.registry.IssuerChoices;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.core.BlockPos;
@@ -23,7 +29,25 @@ import net.minecraft.network.chat.Component;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Applicant-facing document issuer (ID card, passport and permit machines).
+ *
+ * <p>26.3 layout: the single long form is split into a shared {@link TabStrip}
+ * with Applicant / Document / Attached visa / Presets pages. The issue action
+ * stays in the footer on every page, and every page switch snapshots the
+ * visible fields into {@code formCache}, so editing a field on one page and
+ * issuing from another can never lose input. The preset list is a shared
+ * {@link PagedList} instead of the old one-at-a-time arrows.</p>
+ */
 public class IssuerScreen extends VeriScreen {
+    private static final int TAB_APPLICANT = 0;
+    private static final int TAB_DOCUMENT = 1;
+    private static final int TAB_VISA = 2;
+    private static final int TAB_PRESETS = 3;
+
+    private static final int TAB_STRIP_Y = 44;
+    private static final int FOOTER_Y = 352;
+
     private final DeviceType device;
     private final BlockPos pos;
     private final CompoundTag payload;
@@ -56,10 +80,26 @@ public class IssuerScreen extends VeriScreen {
     private final int lockedVisaValidityYears;
     private final boolean lockVisaName;
     private final String lockedVisaName;
+    /** 26.2 nationality lock: the holder nationality is fixed by the terminal. */
+    private final boolean lockNationality;
+    private final String lockedNationality;
+    /** Device number policy: locked = generated server-side, unlocked = typed. */
+    private final boolean lockNumber;
+    /** 26.3 round 12: nationality forced by the machine's issuing country ("" = free). */
+    private String machineNationality = "";
     private final List<DocStyle> styles;
+    /** 26.3 registry: countries/regions and templates pushed by the server. */
+    private final List<CredentialRegistryData.Country> registryCountries = new ArrayList<>();
+    private final List<CredentialRegistryData.Template> registryTemplates = new ArrayList<>();
     private DocStyle style;
+    /** 26.4: registry template currently chosen in the layout dropdown ("" = a plain layout). */
+    private String selectedTemplateId = "";
     private int presetIndex;
+    private int tab = TAB_APPLICANT;
     private CompoundTag formCache;
+    private TabStrip tabs;
+    private PagedList<CompoundTag> presetList;
+
     private EditBox name;
     private EditBox nameLatin;
     private EditBox number;
@@ -76,10 +116,7 @@ public class IssuerScreen extends VeriScreen {
     private EditBox visaCode;
     private EditBox visaEntries;
     private EditBox visaName;
-    private BetterButton styleButton;
-    private BetterButton visaTypeButton;
     private BetterButton includeVisaButton;
-    private BetterButton sexButton;
     private String sex = "M";
     private VisaType visaType;
     private boolean includeVisa;
@@ -90,7 +127,7 @@ public class IssuerScreen extends VeriScreen {
     private int endorsementChoice = 1;
 
     public IssuerScreen(DeviceType device, BlockPos pos, CompoundTag payload) {
-        super(Component.translatable(device.translationKey()), 520, heightFor(device, payload));
+        super(Component.translatable(device.translationKey()), 520, 400);
         this.device = device;
         this.pos = pos;
         this.payload = payload;
@@ -101,7 +138,11 @@ public class IssuerScreen extends VeriScreen {
         };
         this.lockedDocumentName = payload.getString("lockedDocumentName").trim();
         this.lockedAuthority = payload.getString("lockedAuthority").trim();
-        this.lockDocumentName = payload.getBoolean("lockDocumentName") && !lockedDocumentName.isBlank();
+        // A locked document name with a BLANK value means "official preset name":
+        // the applicant may not customise the title at all.
+        this.lockDocumentName = payload.getBoolean("lockDocumentName");
+        // Device policy (administrator): true keeps the number system-generated.
+        this.lockNumber = !payload.contains("lockNumber") || payload.getBoolean("lockNumber");
         this.lockAuthority = payload.getBoolean("lockAuthority") && !lockedAuthority.isBlank();
         DocStyle resolvedStyle = resolveStyle(payload.getString("lockedStyle"), kind);
         this.lockedStyle = resolvedStyle;
@@ -113,7 +154,10 @@ public class IssuerScreen extends VeriScreen {
         this.lockPlace = payload.getBoolean("lockPlace") && !placeValue.isBlank();
         String issueValue = payload.getString("lockedIssueDate").trim();
         this.lockedIssueDate = issueValue;
-        this.lockIssueDate = payload.getBoolean("lockIssueDate") && DateUtil.isValid(issueValue);
+        // A lock with a blank date still applies: the terminal then issues on
+        // "today" (enforced server-side), so the field must show it read-only
+        // instead of silently becoming editable.
+        this.lockIssueDate = payload.getBoolean("lockIssueDate");
         this.lockValidity = payload.getBoolean("lockValidity");
         this.lockedValidityYears = payload.getInt("lockedValidityYears");
         VisaType resolvedVisaType = resolveVisaType(payload.getString("lockedVisaType"));
@@ -140,19 +184,35 @@ public class IssuerScreen extends VeriScreen {
         this.lockedVisaName = visaNameValue;
         // A locked blank name is meaningful: it forces the country/type fallback.
         this.lockVisaName = payload.getBoolean("lockVisaName");
+        // 26.2 nationality lock. A blank locked value has no effect on the server,
+        // so the form only reads as locked when a usable value is stored.
+        String nationalityValue = payload.getString("lockedNationality").trim();
+        this.lockedNationality = nationalityValue;
+        this.lockNationality = payload.getBoolean("lockNationality") && !nationalityValue.isBlank();
         this.visaType = lockVisaType ? lockedVisaType : VisaType.TOURIST;
         this.accent = device.accentColor();
+        readRegistry(payload);
+        this.machineNationality = machineNationalityOf(payload);
     }
 
-    /**
-     * Passports grow to fit the optional attached-visa panel; other issuers only
-     * grow when a locked validity adds its auto-calculation summary line.
-     */
-    private static int heightFor(DeviceType device, CompoundTag payload) {
-        if (device == DeviceType.PASSPORT_ISSUER) {
-            return 480;
+    /** 26.3 registry snapshot slice carried by the issuer opening payload. */
+    private void readRegistry(CompoundTag payload) {
+        ListTag countries = payload.getList("registryCountries", Tag.TAG_COMPOUND);
+        for (int i = 0; i < countries.size(); i++) {
+            CredentialRegistryData.Country country =
+                    CredentialRegistryData.Country.fromTag(countries.getCompound(i));
+            if (country.valid()) {
+                registryCountries.add(country);
+            }
         }
-        return payload.getBoolean("lockValidity") ? 376 : 360;
+        ListTag templates = payload.getList("registryTemplates", Tag.TAG_COMPOUND);
+        for (int i = 0; i < templates.size(); i++) {
+            CredentialRegistryData.Template template =
+                    CredentialRegistryData.Template.fromTag(templates.getCompound(i)).normalized();
+            if (template.valid() && template.kind() == kind) {
+                registryTemplates.add(template);
+            }
+        }
     }
 
     private static DocStyle resolveStyle(String id, DocumentKind kind) {
@@ -198,28 +258,104 @@ public class IssuerScreen extends VeriScreen {
         return lockVisaCountry ? lockedVisaCountry : lockedPlace;
     }
 
+    // ------------------------------------------------------------------- build
     @Override
     protected void build() {
         if (formCache == null) {
             formCache = defaults();
         }
         applyLockedValues();
-        styleButton = addRenderableWidget(new BetterButton(left + 24, top + 46, 210, 20,
-                Component.literal(Component.translatable(style.displayNameKey()).getString()), button -> cycleStyle(), accent));
-        if (lockStyle) {
-            styleButton.active = false;
+        if (kind != DocumentKind.PASSPORT && tab == TAB_VISA) {
+            tab = TAB_APPLICANT;
         }
-        addRenderableWidget(new BetterButton(left + 242, top + 46, 120, 20,
-                Component.translatable("button.veriborder.defaults"), button -> {
-                    sex = "M";
-                    includeVisa = lockIncludeVisa ? lockedIncludeVisa : false;
-                    if (kind == DocumentKind.PASSPORT && !lockVisaType) {
-                        visaType = VisaType.TOURIST;
-                    }
-                    formCache = defaults();
-                    rebuildWidgets();
-                }, Ui.MUTED, true));
+        int x = left + 24;
+        tabs = TabStrip.at(x, top + TAB_STRIP_Y, 472).size(20, 3);
+        tabs.add("applicant", Component.translatable("tab.veriborder.issuer.applicant"));
+        tabs.add("document", Component.translatable("tab.veriborder.issuer.document"));
+        if (kind == DocumentKind.PASSPORT) {
+            tabs.add("visa", Component.translatable("tab.veriborder.issuer.visa_panel"));
+        }
+        tabs.add("presets", Component.translatable("tab.veriborder.issuer.presets"));
+        tabs.setSelected(stripIndex(tab));
 
+        switch (tab) {
+            case TAB_DOCUMENT -> buildDocumentTab();
+            case TAB_VISA -> buildVisaTab();
+            case TAB_PRESETS -> buildPresetsTab();
+            default -> buildApplicantTab();
+        }
+
+        addRenderableWidget(new BetterButton(left + 24, top + FOOTER_Y, 130, 22,
+                Component.translatable("button.veriborder.issue"), button -> issue(), Ui.GREEN));
+        if (kind == DocumentKind.PERMIT) {
+            // 26.4: "initial endorsement" is a dropdown (none + 3 types) instead
+            // of a cycle button; the stored wire value is still the type id.
+            List<Dropdown.Option> endorsements = new ArrayList<>();
+            for (int i = 0; i < endorsementChoices.length; i++) {
+                String id = endorsementChoices[i];
+                String label = "none".equals(id)
+                        ? Component.translatable("screen.veriborder.issuer.none").getString()
+                        : Component.translatable(EndorsementType.byId(id).translationKey()).getString();
+                endorsements.add(new Dropdown.Option(String.valueOf(i), label));
+            }
+            addDropdown(Dropdown.at(left + 164, top + FOOTER_Y, 190)
+                    .height(22)
+                    .prefix(Component.translatable("field.veriborder.initial_endorsement_short").getString())
+                    .options(endorsements)
+                    .selected(String.valueOf(endorsementChoice))
+                    .tooltip(Component.translatable("field.veriborder.initial_endorsement"))
+                    .onChange(id -> {
+                        try {
+                            endorsementChoice = Math.max(0, Math.min(endorsementChoices.length - 1,
+                                    Integer.parseInt(id)));
+                        } catch (NumberFormatException ignored) {
+                            endorsementChoice = 1;
+                        }
+                        rebuildWidgets();
+                    }));
+        }
+        addRenderableWidget(new BetterButton(left + 394, top + FOOTER_Y, 102, 22,
+                Component.translatable("button.veriborder.close"), button -> onClose(), Ui.MUTED, true));
+    }
+
+    private void selectTab(int next) {
+        captureCurrentTab();
+        tab = clampTab(next);
+        rebuildWidgets();
+    }
+
+    private int clampTab(int next) {
+        if (kind != DocumentKind.PASSPORT && next == TAB_VISA) {
+            return TAB_APPLICANT;
+        }
+        return Math.max(TAB_APPLICANT, Math.min(next, TAB_PRESETS));
+    }
+
+    /** Logical tab -> strip index (skip the visa page on non-passports). */
+    private int stripIndex(int logicalTab) {
+        if (kind == DocumentKind.PASSPORT) {
+            return logicalTab;
+        }
+        return switch (logicalTab) {
+            case TAB_DOCUMENT -> 1;
+            case TAB_PRESETS -> 2;
+            default -> 0;
+        };
+    }
+
+    /** Strip index -> logical tab (skip the visa page on non-passports). */
+    private int logicalTab(int stripIndex) {
+        if (kind == DocumentKind.PASSPORT) {
+            return stripIndex;
+        }
+        return switch (stripIndex) {
+            case 1 -> TAB_DOCUMENT;
+            case 2 -> TAB_PRESETS;
+            default -> TAB_APPLICANT;
+        };
+    }
+
+    private void buildApplicantTab() {
         // Permanent document name: empty means the official template name.
         displayName = addField(left + 24, top + 84, 300, "field.veriborder.display_name",
                 formCache.getString("displayName"),
@@ -228,41 +364,145 @@ public class IssuerScreen extends VeriScreen {
             displayName.setValue(lockedDocumentName);
             displayName.setEditable(false);
         }
-        name = addField(left + 24, top + 114, 214, "field.veriborder.name", formCache.getString("name"));
-        nameLatin = addField(left + 266, top + 114, 230, "field.veriborder.name_latin", formCache.getString("nameLatin"));
-        number = addField(left + 24, top + 144, 214, "field.veriborder.number", formCache.getString("number"),
-                "hint.veriborder.auto");
-        sexButton = addRenderableWidget(new BetterButton(left + 266, top + 140, 72, 20,
-                Component.translatable("sex.veriborder." + sexKey(sex)), button -> {
-                    sex = switch (sex) {
-                        case "M" -> "F";
-                        case "F" -> "X";
-                        default -> "M";
-                    };
+        name = addField(left + 24, top + 116, 214, "field.veriborder.name", formCache.getString("name"), null);
+        nameLatin = addField(left + 266, top + 116, 230, "field.veriborder.name_latin",
+                formCache.getString("nameLatin"), null);
+        number = addField(left + 24, top + 148, 214, "field.veriborder.number", formCache.getString("number"),
+                lockNumber ? "hint.veriborder.generated" : "hint.veriborder.auto");
+        if (lockNumber) {
+            // A locked number is generated at issue time; the field never accepts
+            // a typed value (the server ignores one anyway).
+            number.setValue("");
+            number.setEditable(false);
+        }
+        // 26.4: sex is a dropdown (M/F/X) instead of a cycle button.
+        List<Dropdown.Option> sexes = new ArrayList<>();
+        for (String value : new String[]{"M", "F", "X"}) {
+            sexes.add(new Dropdown.Option(value,
+                    Component.translatable("sex.veriborder." + sexKey(value)).getString()));
+        }
+        addDropdown(Dropdown.at(left + 266, top + 144, 120)
+                .prefix(Component.translatable("field.veriborder.sex").getString() + ": ")
+                .options(sexes)
+                .selected(sex)
+                .onChange(id -> {
+                    sex = id;
+                    captureApplicant();
                     rebuildWidgets();
-                }, Ui.CYAN, true));
-        birth = addField(left + 24, top + 174, 214, "field.veriborder.birth", formCache.getString("birthDate"),
+                }));
+        birth = addField(left + 24, top + 180, 214, "field.veriborder.birth", formCache.getString("birthDate"),
                 "hint.veriborder.date");
-        nationality = addField(left + 266, top + 174, 230, "field.veriborder.nationality", formCache.getString("nationality"));
-        authority = addField(left + 24, top + 204, 214, "field.veriborder.issuer",
+        if (!lockNationality && machineNationality.isBlank() && !registryCountries.isEmpty()) {
+            // 26.3: the nationality selector reads the credential registry's
+            // country/region list instead of a free-text field. 26.4: dropdown
+            // with a search row, because that list can be long.
+            List<Dropdown.Option> nationalities = new ArrayList<>();
+            for (CredentialRegistryData.Country country : registryCountries) {
+                nationalities.add(new Dropdown.Option(countryNationality(country),
+                        country.code() + "  " + countryNationality(country)));
+            }
+            addDropdown(Dropdown.at(left + 266, top + 176, 230)
+                    .options(nationalities)
+                    .selected(nationalityValue())
+                    .placeholder(Component.translatable("hint.veriborder.optional").getString())
+                    .tooltip(Component.translatable("field.veriborder.nationality"))
+                    .onChange(id -> {
+                        if (formCache != null) {
+                            formCache.putString("nationality", id);
+                        }
+                    }));
+        } else {
+            // 26.3 round 12: the issuing machine's single country selector decides
+            // the nationality too, so the applicant only sees the value. A legacy
+            // nationality lock still shows its stored value read-only.
+            String value = lockNationality ? lockedNationality
+                    : machineNationality.isBlank() ? formCache.getString("nationality") : machineNationality;
+            nationality = addField(left + 266, top + 180, 230, "field.veriborder.nationality", value,
+                    lockNationality ? "hint.veriborder.locked"
+                            : machineNationality.isBlank() ? null : "hint.veriborder.machine_nationality");
+            if (lockNationality || !machineNationality.isBlank()) {
+                nationality.setValue(value);
+                nationality.setEditable(false);
+            }
+        }
+    }
+
+    /**
+     * Nationality forced by the machine's issuing country (26.3 round 12), or ""
+     * when the machine has no registered country selected.
+     */
+    private String machineNationalityOf(CompoundTag payload) {
+        String code = com.veriborder.doc.MrzUtil.countryCode(payload.getString("issuerCountry"));
+        if (code.isEmpty()) {
+            return "";
+        }
+        for (CredentialRegistryData.Country country : registryCountries) {
+            if (country.code().equals(code)) {
+                return country.defaultNationality().isBlank() ? country.displayName(true)
+                        : country.defaultNationality();
+            }
+        }
+        return "";
+    }
+
+    /** Current form nationality (locked value wins). */
+    private String nationalityValue() {
+        return lockNationality ? lockedNationality : formCache.getString("nationality");
+    }
+
+    private static String countryNationality(CredentialRegistryData.Country country) {
+        if (country == null) {
+            return "";
+        }
+        return country.defaultNationality().isBlank() ? country.displayName(true) : country.defaultNationality();
+    }
+
+    private void buildDocumentTab() {
+        // 26.4 fix: the document layout dropdown now merges the official layouts
+        // of this credential kind with the registry templates of the same kind,
+        // so a template saved in the registry ("注册器") shows up here instead of
+        // only in the presets tab.
+        List<Dropdown.Option> layouts = new ArrayList<>();
+        for (IssuerChoices.Choice choice : IssuerChoices.layoutChoices(kind, registryTemplates,
+                value -> Component.translatable(value.displayNameKey()).getString())) {
+            layouts.add(new Dropdown.Option(choice.value(), choice.label()));
+        }
+        addDropdown(Dropdown.at(left + 24, top + 84, 230)
+                .options(layouts)
+                .selected(selectedLayoutValue())
+                .enabled(!lockStyle)
+                .tooltip(lockStyle ? Component.translatable("hint.veriborder.locked")
+                        : Component.translatable("button.veriborder.change_style"))
+                .onChange(this::selectLayout));
+        addRenderableWidget(new BetterButton(left + 260, top + 84, 90, 20,
+                Component.translatable("button.veriborder.defaults"), button -> {
+                    formCache = defaults();
+                    sex = "M";
+                    includeVisa = lockIncludeVisa ? lockedIncludeVisa : false;
+                    if (kind == DocumentKind.PASSPORT && !lockVisaType) {
+                        visaType = VisaType.TOURIST;
+                    }
+                    rebuildWidgets();
+                }, Ui.MUTED, true));
+        authority = addField(left + 24, top + 116, 214, "field.veriborder.issuer",
                 formCache.getString("authority"), lockAuthority ? "hint.veriborder.locked" : null);
         if (lockAuthority) {
             authority.setValue(lockedAuthority);
             authority.setEditable(false);
         }
-        place = addField(left + 266, top + 204, 230, "field.veriborder.place",
+        place = addField(left + 266, top + 116, 230, "field.veriborder.place",
                 formCache.getString("placeOfIssue"), lockPlace ? "hint.veriborder.locked" : null);
         if (lockPlace) {
             place.setValue(lockedPlace);
             place.setEditable(false);
         }
-        issue = addField(left + 24, top + 234, 214, "field.veriborder.issue",
+        issue = addField(left + 24, top + 148, 214, "field.veriborder.issue",
                 formCache.getString("issueDate"), lockIssueDate ? "hint.veriborder.locked" : "hint.veriborder.date");
         if (lockIssueDate) {
-            issue.setValue(lockedIssueDate);
+            issue.setValue(lockedIssueValue());
             issue.setEditable(false);
         }
-        expiry = addField(left + 266, top + 234, 230, "field.veriborder.expiry",
+        expiry = addField(left + 266, top + 148, 230, "field.veriborder.expiry",
                 formCache.getString("expiryDate"),
                 lockValidity ? "hint.veriborder.auto_years" : "hint.veriborder.date");
         if (lockValidity) {
@@ -277,40 +517,7 @@ public class IssuerScreen extends VeriScreen {
                 }
             });
         }
-        address = addField(left + 24, top + 264, 472, "field.veriborder.address", formCache.getString("address"));
-
-        presetName = addField(left + 24, top + 296, 190, "field.veriborder.preset_name",
-                payload.getList("presets", Tag.TAG_COMPOUND).isEmpty() ? "Standard"
-                        : payload.getList("presets", Tag.TAG_COMPOUND).getCompound(0).getString("name"),
-                "hint.veriborder.preset");
-        addRenderableWidget(new BetterButton(left + 224, top + 292, 30, 20, Component.literal("◀"),
-                button -> movePreset(-1), Ui.MUTED, true));
-        addRenderableWidget(new BetterButton(left + 258, top + 292, 30, 20, Component.literal("▶"),
-                button -> movePreset(1), Ui.MUTED, true));
-        addRenderableWidget(new BetterButton(left + 294, top + 292, 66, 20,
-                Component.translatable("button.veriborder.apply"), button -> applyPreset(), Ui.CYAN, true));
-        addRenderableWidget(new BetterButton(left + 366, top + 292, 60, 20,
-                Component.translatable("button.veriborder.save"), button -> savePreset(), Ui.CYAN, true));
-        addRenderableWidget(new BetterButton(left + 432, top + 292, 64, 20,
-                Component.translatable("button.veriborder.delete"), button -> deletePreset(), Ui.RED, true));
-
-        if (kind == DocumentKind.PASSPORT) {
-            buildVisaPanel();
-        }
-
-        int actionY = kind == DocumentKind.PASSPORT ? 442 : 330;
-        addRenderableWidget(new BetterButton(left + 24, top + actionY, 130, 22,
-                Component.translatable("button.veriborder.issue"), button -> issue(), Ui.GREEN));
-        if (kind == DocumentKind.PERMIT) {
-            addRenderableWidget(new BetterButton(left + 164, top + actionY, 190, 22,
-                    Component.translatable("screen.veriborder.issuer.initial", endorsementLabel()),
-                    button -> {
-                        endorsementChoice = (endorsementChoice + 1) % endorsementChoices.length;
-                        rebuildWidgets();
-                    }, Ui.PURPLE, true));
-        }
-        addRenderableWidget(new BetterButton(left + 394, top + actionY, 102, 22,
-                Component.translatable("button.veriborder.close"), button -> onClose(), Ui.MUTED, true));
+        address = addField(left + 24, top + 180, 472, "field.veriborder.address", formCache.getString("address"));
     }
 
     /**
@@ -319,8 +526,8 @@ public class IssuerScreen extends VeriScreen {
      * because the visa inherits them from the passport, so a locked value is
      * simply shown here (the server applies it authoritatively).
      */
-    private void buildVisaPanel() {
-        includeVisaButton = addRenderableWidget(new BetterButton(left + 32, top + 334, 150, 18,
+    private void buildVisaTab() {
+        includeVisaButton = addRenderableWidget(new BetterButton(left + 24, top + 84, 150, 18,
                 includeVisaLabel(), button -> {
                     if (lockIncludeVisa) {
                         return;
@@ -331,39 +538,45 @@ public class IssuerScreen extends VeriScreen {
         if (lockIncludeVisa) {
             includeVisaButton.active = false;
         }
-
         String countryValue = formCache.getString("visaCountry");
         if (countryValue.isBlank()) {
             countryValue = style.defaultNationality();
         }
         boolean countryLocked = visaCountryLocked();
-        visaCountry = addField(left + 200, top + 344, 130, "field.veriborder.visa_country",
+        visaCountry = addField(left + 24, top + 116, 230, "field.veriborder.visa_country",
                 countryLocked ? lockedVisaCountryValue() : countryValue,
                 countryLocked ? "hint.veriborder.locked" : null);
         if (countryLocked) {
             visaCountry.setValue(lockedVisaCountryValue());
             visaCountry.setEditable(false);
         }
-        visaTypeButton = addRenderableWidget(new BetterButton(left + 340, top + 336, 148, 18,
-                Component.translatable(visaType.translationKey()), button -> {
-                    if (lockVisaType) {
-                        return;
-                    }
-                    visaType = visaType.next();
-                    button.setMessage(Component.translatable(visaType.translationKey()));
-                }, Ui.PURPLE, true));
-        if (lockVisaType) {
-            visaTypeButton.active = false;
+        // 26.4: attached visa type is a dropdown (6 options).
+        List<Dropdown.Option> visaTypes = new ArrayList<>();
+        for (VisaType value : VisaType.values()) {
+            visaTypes.add(new Dropdown.Option(value.id(),
+                    Component.translatable(value.translationKey()).getString()));
         }
-
-        visaName = addField(left + 32, top + 380, 190, "field.veriborder.visa_name",
+        addDropdown(Dropdown.at(left + 266, top + 112, 206)
+                .options(visaTypes)
+                .selected(visaType.id())
+                .enabled(!lockVisaType)
+                .tooltip(lockVisaType
+                        ? Component.translatable("screen.veriborder.visa.self_locked",
+                                Component.translatable(lockedVisaType.translationKey()))
+                        : Component.translatable("field.veriborder.visa_type"))
+                .onChange(id -> {
+                    if (!lockVisaType) {
+                        visaType = VisaType.byId(id);
+                    }
+                }));
+        visaName = addField(left + 24, top + 148, 214, "field.veriborder.visa_name",
                 formCache.getString("visaName"),
                 lockVisaName ? "hint.veriborder.locked" : "hint.veriborder.visa_name");
         if (lockVisaName) {
             visaName.setValue(lockedVisaName);
             visaName.setEditable(false);
         }
-        visaCode = addField(left + 232, top + 380, 130, "field.veriborder.visa_code",
+        visaCode = addField(left + 266, top + 148, 230, "field.veriborder.visa_code",
                 lockVisaCode ? lockedVisaCode : formCache.getString("visaCode"),
                 lockVisaCode ? "hint.veriborder.locked" : "hint.veriborder.code");
         visaCode.setMaxLength(8);
@@ -373,7 +586,7 @@ public class IssuerScreen extends VeriScreen {
             visaCode.setEditable(false);
         }
         String entriesValue = formCache.getString("visaEntries");
-        visaEntries = addField(left + 372, top + 380, 60, "field.veriborder.entries",
+        visaEntries = addField(left + 24, top + 180, 100, "field.veriborder.entries",
                 entriesValue.isBlank() ? "1" : entriesValue, "hint.veriborder.unlimited");
         visaEntries.setMaxLength(3);
         visaEntries.setFilter(value -> value.length() <= 3
@@ -382,6 +595,34 @@ public class IssuerScreen extends VeriScreen {
             visaEntries.setValue(String.valueOf(lockedVisaEntries));
             visaEntries.setEditable(false);
         }
+    }
+
+    /** Preset library: a paged list of stored templates plus apply/save/delete. */
+    private void buildPresetsTab() {
+        presetName = addField(left + 24, top + 84, 300, "field.veriborder.preset_name",
+                currentPresetName(), "hint.veriborder.preset");
+        presetList = PagedList.<CompoundTag>at(left + 24, top + 112, 472, 192)
+                .rowHeight(28).rowGap(1).accent(accent).emptyText(Component.translatable("hint.veriborder.no_presets"));
+        presetList.setItems(presets());
+        presetList.setSelectedIndex(presetIndex >= 0 && presetIndex < presets().size() ? presetIndex : -1);
+        presetList.setPage(presetIndex >= 0 && presetList.perPage() > 0
+                ? presetIndex / Math.max(1, presetList.perPage()) : 0);
+
+        addRenderableWidget(new BetterButton(left + 24, top + 312, 70, 20,
+                Component.translatable("button.veriborder.apply"), button -> applyPreset(), Ui.PURPLE, true));
+        addRenderableWidget(new BetterButton(left + 100, top + 312, 64, 20,
+                Component.translatable("button.veriborder.save"), button -> savePreset(), Ui.CYAN, true));
+        addRenderableWidget(new BetterButton(left + 170, top + 312, 72, 20,
+                Component.translatable("button.veriborder.delete"), button -> deletePreset(), Ui.RED, true));
+    }
+
+    private String currentPresetName() {
+        List<CompoundTag> list = presets();
+        if (list.isEmpty()) {
+            return Component.translatable("screen.veriborder.issuer.default_preset").getString();
+        }
+        int index = Math.floorMod(presetIndex, list.size());
+        return list.get(index).getString("name");
     }
 
     private Component includeVisaLabel() {
@@ -437,15 +678,18 @@ public class IssuerScreen extends VeriScreen {
             formCache.putString("placeOfIssue", lockedPlace);
         }
         if (lockIssueDate) {
-            formCache.putString("issueDate", lockedIssueDate);
+            formCache.putString("issueDate", lockedIssueValue());
+        }
+        if (lockNationality) {
+            formCache.putString("nationality", lockedNationality);
+        } else if (!machineNationality.isBlank()) {
+            // 26.3 round 12: the machine's country selector decides the nationality.
+            formCache.putString("nationality", machineNationality);
         }
         if (lockValidity) {
             formCache.putString("expiryDate", autoExpiry(formCache.getString("issueDate")));
         }
         if (kind == DocumentKind.PASSPORT) {
-            if (lockPlace) {
-                formCache.putString("placeOfIssue", lockedPlace);
-            }
             if (visaCountryLocked()) {
                 formCache.putString("visaCountry", lockedVisaCountryValue());
             }
@@ -471,14 +715,18 @@ public class IssuerScreen extends VeriScreen {
         }
     }
 
+    /** Locked issue date, or today when the administrator left the lock value blank. */
+    private String lockedIssueValue() {
+        return lockedIssueDate == null || lockedIssueDate.isBlank() ? DateUtil.today() : lockedIssueDate;
+    }
+
     private String autoExpiry(String issueDate) {
         return lockedValidityYears <= 0 ? DateUtil.PERMANENT
                 : DateUtil.plusYears(issueDate, lockedValidityYears);
     }
 
     private String visaIssueValue() {
-        return lockVisaIssueDate ? lockedVisaIssueDate
-                : issue == null ? formCache.getString("issueDate") : issue.getValue();
+        return lockVisaIssueDate ? lockedVisaIssueDate : issueValue();
     }
 
     private String visaExpiryValue() {
@@ -486,18 +734,30 @@ public class IssuerScreen extends VeriScreen {
             return lockedVisaValidityYears <= 0 ? DateUtil.PERMANENT
                     : DateUtil.plusYears(visaIssueValue(), lockedVisaValidityYears);
         }
-        return expiry == null ? formCache.getString("expiryDate") : expiry.getValue();
+        return expiryValue();
     }
 
-    private void cycleStyle() {
-        if (lockStyle) {
+    private String issueValue() {
+        String value = issue != null ? issue.getValue() : formCache.getString("issueDate");
+        return DateUtil.isValid(value) ? value : DateUtil.today();
+    }
+
+    private String expiryValue() {
+        return expiry != null ? expiry.getValue() : formCache.getString("expiryDate");
+    }
+
+    /** 26.4: applies a layout chosen from the dropdown (same defaults as before). */
+    private void selectStyle(String styleId) {
+        DocStyle next = DocStyle.byIdOrNull(styleId);
+        if (lockStyle || next == null || next.kind() != kind || next == style) {
             return;
         }
-        captureFields();
-        style = DocStyle.nextForKind(kind, style);
+        captureCurrentTab();
+        selectedTemplateId = "";
+        style = next;
         formCache.putString("style", style.id());
         formCache.putString("authority", style.defaultAuthority());
-        formCache.putString("nationality", style.defaultNationality());
+        formCache.putString("nationality", lockNationality ? lockedNationality : style.defaultNationality());
         formCache.putString("placeOfIssue", style.defaultPlace());
         formCache.putString("address", DocumentFactory.defaultAddress(style));
         if (!lockValidity) {
@@ -517,49 +777,176 @@ public class IssuerScreen extends VeriScreen {
         rebuildWidgets();
     }
 
-    private void captureFields() {
-        if (name == null) {
+    /** Value of the layout dropdown: the chosen registry template or the layout id. */
+    private String selectedLayoutValue() {
+        for (CredentialRegistryData.Template template : registryTemplates) {
+            if (template.id().equals(selectedTemplateId) && template.style().equals(style.id())) {
+                return IssuerChoices.valueOf(template);
+            }
+        }
+        return style.id();
+    }
+
+    /** 26.4: a dropdown value is either a layout id or {@code template:<id>}. */
+    private void selectLayout(String value) {
+        CredentialRegistryData.Template template = IssuerChoices.resolve(value, registryTemplates);
+        if (template != null) {
+            applyTemplateChoice(template);
+            return;
+        }
+        selectStyle(value);
+    }
+
+    /**
+     * 26.4 fix: applies a registry template to the form. The template's layout is
+     * used as the document layout and its colour / icon / issuing country are put
+     * on the form cache, so the issued document is written with exactly the
+     * template the operator picked.
+     */
+    private void applyTemplateChoice(CredentialRegistryData.Template template) {
+        DocStyle templateStyle = DocStyle.byIdOrNull(template.style());
+        if (templateStyle == null || templateStyle.kind() != kind || formCache == null) {
+            return;
+        }
+        captureCurrentTab();
+        selectedTemplateId = template.id();
+        if (!lockStyle) {
+            style = templateStyle;
+        }
+        // Template defaults: style + issuing country + cover colour + icon.
+        template.applyTo(formCache);
+        formCache.putString("style", style.id());
+        formCache.putString("templateId", template.id());
+        formCache.putString("authority", templateStyle.defaultAuthority());
+        formCache.putString("nationality", lockNationality ? lockedNationality : templateStyle.defaultNationality());
+        formCache.putString("placeOfIssue", templateStyle.defaultPlace());
+        formCache.putString("address", DocumentFactory.defaultAddress(templateStyle));
+        if (!lockValidity) {
+            formCache.putString("expiryDate", templateStyle.permanent() ? DateUtil.PERMANENT
+                    : DateUtil.plusYears(formCache.getString("issueDate"), templateStyle.validityYears()));
+        } else {
+            formCache.putString("expiryDate", autoExpiry(formCache.getString("issueDate")));
+        }
+        if (kind == DocumentKind.PASSPORT) {
+            if (!visaCountryLocked()) {
+                formCache.putString("visaCountry", templateStyle.defaultNationality());
+            }
+            if (!lockVisaType) {
+                formCache.putString("visaType", visaType.id());
+            }
+        }
+        rebuildWidgets();
+    }
+
+    // ------------------------------------------------------------- form capture
+
+    /** Snapshots the visible page's widgets so a tab switch/issue loses nothing. */
+    private void captureCurrentTab() {
+        if (formCache == null) {
+            return;
+        }
+        switch (tab) {
+            case TAB_APPLICANT -> captureApplicant();
+            case TAB_DOCUMENT -> captureDocument();
+            case TAB_VISA -> captureVisa();
+            default -> {
+            }
+        }
+    }
+
+    private void captureApplicant() {
+        if (name == null || formCache == null) {
             return;
         }
         formCache.putString("style", style.id());
         formCache.putString("displayName", displayName.getValue());
         formCache.putString("name", name.getValue());
         formCache.putString("nameLatin", nameLatin.getValue());
-        formCache.putString("number", number.getValue());
+        if (!lockNumber) {
+            formCache.putString("number", number.getValue());
+        }
         formCache.putString("sex", sex);
         formCache.putString("birthDate", birth.getValue());
-        formCache.putString("nationality", nationality.getValue());
-        formCache.putString("authority", authority.getValue());
-        formCache.putString("placeOfIssue", place.getValue());
-        formCache.putString("issueDate", issue.getValue());
-        formCache.putString("expiryDate", expiry.getValue());
-        formCache.putString("address", address.getValue());
-        if (kind == DocumentKind.PASSPORT && visaCountry != null) {
-            formCache.putBoolean("includeVisa", lockIncludeVisa ? lockedIncludeVisa : includeVisa);
-            formCache.putString("visaCountry", visaCountry.getValue());
-            formCache.putString("visaType", visaType.id());
-            formCache.putString("visaCode", visaCode == null ? "" : visaCode.getValue());
-            formCache.putString("visaEntries", visaEntries == null ? "1" : visaEntries.getValue());
-            formCache.putString("visaName", visaName == null ? "" : visaName.getValue());
+        if (nationality != null) {
+            formCache.putString("nationality", nationality.getValue());
         }
     }
 
+    private void captureDocument() {
+        if (formCache == null) {
+            return;
+        }
+        formCache.putString("style", style.id());
+        if (authority != null) {
+            formCache.putString("authority", authority.getValue());
+        }
+        if (place != null) {
+            formCache.putString("placeOfIssue", place.getValue());
+        }
+        if (issue != null) {
+            formCache.putString("issueDate", issue.getValue());
+        }
+        if (expiry != null) {
+            formCache.putString("expiryDate", expiry.getValue());
+        }
+        if (address != null) {
+            formCache.putString("address", address.getValue());
+        }
+    }
+
+    private void captureVisa() {
+        if (formCache == null || kind != DocumentKind.PASSPORT || visaCountry == null) {
+            return;
+        }
+        formCache.putBoolean("includeVisa", lockIncludeVisa ? lockedIncludeVisa : includeVisa);
+        formCache.putString("visaCountry", visaCountry.getValue());
+        formCache.putString("visaType", visaType.id());
+        formCache.putString("visaCode", visaCode == null ? "" : visaCode.getValue());
+        formCache.putString("visaEntries", visaEntries == null ? "1" : visaEntries.getValue());
+        formCache.putString("visaName", visaName == null ? "" : visaName.getValue());
+    }
+
+    /**
+     * Preset library = this machine's saved presets followed by the global
+     * registry templates of the matching document kind. A registry entry is
+     * marked {@code registry=true} so it is read-only here (it is deleted from
+     * the registry screen), while applying it works exactly like a local preset.
+     */
     private List<CompoundTag> presets() {
         ListTag list = payload.getList("presets", Tag.TAG_COMPOUND);
         List<CompoundTag> result = new ArrayList<>();
         for (int i = 0; i < list.size(); i++) {
             result.add(list.getCompound(i));
         }
+        for (CredentialRegistryData.Template template : registryTemplates) {
+            DocStyle templateStyle = DocStyle.byId(template.style());
+            if (templateStyle.kind() != kind) {
+                continue;
+            }
+            CompoundTag values = defaults();
+            values.putString("style", templateStyle.id());
+            values.putString("authority", templateStyle.defaultAuthority());
+            values.putString("nationality", templateStyle.defaultNationality());
+            values.putString("placeOfIssue", templateStyle.defaultPlace());
+            values.putString("address", DocumentFactory.defaultAddress(templateStyle));
+            CompoundTag entry = new CompoundTag();
+            entry.putString("name", template.name());
+            entry.putBoolean("registry", true);
+            template.applyTo(values);
+            entry.put("values", values);
+            result.add(entry);
+        }
         return result;
     }
 
-    private void movePreset(int direction) {
-        List<CompoundTag> list = presets();
-        if (list.isEmpty()) {
-            return;
+    private void selectPreset(int index) {
+        presetIndex = Math.max(0, index);
+        if (presetList != null) {
+            presetList.setSelectedIndex(presetIndex);
         }
-        presetIndex = (presetIndex + direction + list.size()) % list.size();
-        presetName.setValue(list.get(presetIndex).getString("name"));
+        if (presetName != null) {
+            presetName.setValue(currentPresetName());
+        }
     }
 
     private void applyPreset() {
@@ -575,6 +962,9 @@ public class IssuerScreen extends VeriScreen {
         }
         formCache = values.copy();
         formCache.putString("style", style.id());
+        // A saved preset is a plain layout, not the registry template that may
+        // have been selected before (26.4).
+        selectedTemplateId = "";
         sex = formCache.getString("sex").isBlank() ? "M" : formCache.getString("sex");
         if (kind == DocumentKind.PASSPORT) {
             includeVisa = lockIncludeVisa ? lockedIncludeVisa : formCache.getBoolean("includeVisa");
@@ -591,43 +981,69 @@ public class IssuerScreen extends VeriScreen {
                 formCache.putString("visaName", lockedVisaName);
             }
             formCache.putBoolean("includeVisa", includeVisa);
+            if (formCache.getString("visaEntries").isBlank()) {
+                formCache.putString("visaEntries", "1");
+            }
         }
-        presetName.setValue(entry.getString("name"));
+        // Show the applied values on the first page instead of leaving the user
+        // on a preset list whose fields are not visible.
+        tab = TAB_APPLICANT;
         rebuildWidgets();
-        if (presetName != null) {
-            presetName.setValue(entry.getString("name"));
-        }
     }
 
     private void savePreset() {
-        captureFields();
+        captureCurrentTab();
         CompoundTag data = formCache.copy();
-        data.putString("presetName", presetName.getValue().isBlank() ? "Standard" : presetName.getValue());
+        String name = presetName == null ? currentPresetName() : presetName.getValue();
+        data.putString("presetName", name.isBlank()
+                ? Component.translatable("screen.veriborder.issuer.default_preset").getString() : name);
         ModNetwork.CHANNEL.sendToServer(new DeviceActionPacket(pos, "save_preset", data, -1));
     }
 
     private void deletePreset() {
+        List<CompoundTag> list = presets();
+        CompoundTag selected = presetIndex >= 0 && presetIndex < list.size() ? list.get(presetIndex) : null;
+        if (selected != null && selected.getBoolean("registry")) {
+            // Global templates are removed from the registry screen, not here.
+            return;
+        }
         CompoundTag data = new CompoundTag();
-        data.putString("presetName", presetName.getValue());
+        String name = presetName == null ? currentPresetName() : presetName.getValue();
+        data.putString("presetName", name);
         ModNetwork.CHANNEL.sendToServer(new DeviceActionPacket(pos, "delete_preset", data, -1));
     }
 
     private void issue() {
-        captureFields();
+        captureCurrentTab();
         CompoundTag data = formCache.copy();
         data.putString("style", style.id());
         data.putString("sex", sex);
+        // The DOCUMENT name lock is still a server payload flag the form mirrors.
+        // Number/MRZ/entry/permanent-code policy is device configuration and is
+        // resolved server-side from the block entity, never from this form.
+        data.putBoolean("lockDocumentName", lockDocumentName);
+        // 26.4: the trusted locked title travels only from the block entity to the
+        // factory (DocumentFactory.LOCKED_DISPLAY_NAME). The client must never
+        // send it, so a forged payload cannot rename a locked document.
+        data.remove("lockedDisplayName");
+        if (lockNumber) {
+            data.putString("number", "");
+        }
         if (kind == DocumentKind.PERMIT && !"none".equals(endorsementChoices[endorsementChoice])) {
             data.putString("initialEndorsementType", endorsementChoices[endorsementChoice]);
         }
         if (kind == DocumentKind.PASSPORT) {
             data.putBoolean("includeVisa", lockIncludeVisa ? lockedIncludeVisa : includeVisa);
-            data.putString("visaCountry", visaCountry == null ? "" : visaCountry.getValue());
+            data.putString("visaCountry", visaCountry != null ? visaCountry.getValue()
+                    : formCache.getString("visaCountry"));
             data.putString("visaType", visaType.id());
-            data.putString("visaCode", visaCode == null ? "" : visaCode.getValue().trim());
+            data.putString("visaCode", visaCode != null ? visaCode.getValue().trim()
+                    : formCache.getString("visaCode"));
             data.putInt("visaEntries", lockVisaEntries ? lockedVisaEntries
-                    : parseEntries(visaEntries == null ? "1" : visaEntries.getValue()));
-            data.putString("visaName", visaName == null ? "" : visaName.getValue().trim());
+                    : parseEntries(visaEntries != null ? visaEntries.getValue()
+                    : formCache.getString("visaEntries")));
+            data.putString("visaName", visaName != null ? visaName.getValue().trim()
+                    : formCache.getString("visaName"));
         }
         ModNetwork.CHANNEL.sendToServer(new DeviceActionPacket(pos, "issue_document", data, -1));
     }
@@ -635,15 +1051,9 @@ public class IssuerScreen extends VeriScreen {
     private static int parseEntries(String value) {
         try {
             return Math.max(0, Integer.parseInt(value.trim()));
-        } catch (NumberFormatException ignored) {
+        } catch (RuntimeException ignored) {
             return 1;
         }
-    }
-
-    private Component endorsementLabel() {
-        String id = endorsementChoices[endorsementChoice];
-        return "none".equals(id) ? Component.translatable("screen.veriborder.issuer.none")
-                : Component.translatable(EndorsementType.byId(id).translationKey());
     }
 
     private static String sexKey(String sex) {
@@ -654,51 +1064,199 @@ public class IssuerScreen extends VeriScreen {
         };
     }
 
+    // ------------------------------------------------------------------ render
     @Override
     public void renderBackground(GuiGraphics graphics) {
         super.renderBackground(graphics);
         header(graphics, Component.translatable(device.translationKey()).getString(),
                 Component.translatable(device.descriptionKey()).getString());
-        graphics.fill(left + 24, top + 68, left + 496, top + 69, Ui.BORDER);
-        String custom = displayName == null ? formCache.getString("displayName") : displayName.getValue();
-        String effective = custom == null || custom.isBlank()
-                ? Component.translatable(style.displayNameKey()).getString() : custom.trim();
-        graphics.drawString(font, Ui.ellipsis(Component.translatable("screen.veriborder.issuer.effective",
-                effective).getString(), 160), left + 330, top + 87, custom == null || custom.isBlank()
-                ? Ui.DIM : Ui.CYAN, false);
-        if (kind == DocumentKind.PASSPORT) {
-            renderVisaPanel(graphics);
-        }
-        if (kind != DocumentKind.PERMIT) {
-            int hintY = kind == DocumentKind.PASSPORT ? top + 444 : top + 338;
-            Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.hint"), left + 164,
-                    hintY, 222, Ui.DIM);
+        tabs.draw(graphics, font, accent);
+        switch (tab) {
+            case TAB_DOCUMENT -> renderDocumentTab(graphics);
+            case TAB_VISA -> renderVisaTab(graphics);
+            case TAB_PRESETS -> renderPresetsTab(graphics);
+            default -> renderApplicantTab(graphics);
         }
         if (lockValidity) {
             String years = lockedValidityYears <= 0
                     ? Component.translatable("date.veriborder.permanent").getString()
                     : Component.translatable("screen.veriborder.years", lockedValidityYears).getString();
-            String expiryValue = expiry == null ? formCache.getString("expiryDate") : expiry.getValue();
-            int y = kind == DocumentKind.PASSPORT ? top + 468 : top + 360;
+            String expiryText = tab == TAB_VISA ? visaExpiryValue() : expiryValue();
             Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.validity_locked",
-                    years, expiryValue), left + 24, y, 472, Ui.DIM);
+                    years, expiryText), left + 24, top + 378, 472, Ui.DIM);
+        }
+        if (kind != DocumentKind.PERMIT) {
+            Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.hint"), left + 164,
+                    top + 380, 222, Ui.DIM);
         }
     }
 
-    private void renderVisaPanel(GuiGraphics graphics) {
-        // Translucent grouping panel drawn after the field chrome: opaque text
-        // wells and label chips stay fully legible underneath.
-        graphics.fill(left + 24, top + 318, left + 496, top + 436, 0x181E3247);
-        graphics.renderOutline(left + 24, top + 318, 472, 118, Ui.BORDER);
-        graphics.drawString(font, Component.translatable("screen.veriborder.issuer.visa_panel").getString(),
-                left + 32, top + 322, Ui.GOLD, false);
-        graphics.drawString(font, Component.translatable("field.veriborder.visa_type").getString(),
-                left + 340, top + 326, Ui.DIM, false);
+    private void renderApplicantTab(GuiGraphics graphics) {
+        DocumentData preview = previewDocument();
+        Ui.documentCard(graphics, left + 24, top + 216, 220, 112, preview);
+        Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.hint"), left + 258,
+                top + 222, 238, Ui.MUTED);
+        Ui.clipped(graphics, Component.translatable("screen.veriborder.terminal.name_hint"), left + 258,
+                top + 242, 238, Ui.DIM);
+        Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.effective",
+                effectiveName()), left + 258, top + 260, 238, Ui.CYAN);
+        if (lockDocumentName) {
+            Ui.clipped(graphics, Component.translatable("screen.veriborder.terminal.name_locked_hint"),
+                    left + 258, top + 274, 238, Ui.AMBER);
+        }
+    }
+
+    private void renderDocumentTab(GuiGraphics graphics) {
+        graphics.fill(left + 24, top + 208, left + 496, top + 209, Ui.BORDER);
+        Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.effective",
+                effectiveName()), left + 24, top + 214, 300, Ui.CYAN);
+        DocumentData preview = previewDocument();
+        Ui.documentCard(graphics, left + 24, top + 232, 220, 108, preview);
+        Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.hint"), left + 258,
+                top + 236, 238, Ui.MUTED);
+        if (lockValidity) {
+            String years = lockedValidityYears <= 0
+                    ? Component.translatable("date.veriborder.permanent").getString()
+                    : Component.translatable("screen.veriborder.years", lockedValidityYears).getString();
+            Ui.clipped(graphics, Component.translatable("screen.veriborder.lock.validity_line", years,
+                    expiryValue()), left + 258, top + 256, 238, Ui.AMBER);
+        }
+        Ui.clipped(graphics, Component.translatable("screen.veriborder.terminal.edit_footer"),
+                left + 258, top + 276, 238, Ui.DIM);
+    }
+
+    private void renderVisaTab(GuiGraphics graphics) {
+        DocumentData preview = previewDocument();
+        Ui.documentCard(graphics, left + 24, top + 208, 180, 104, preview);
         Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.visa_issue", visaIssueValue()),
-                left + 32, top + 398, 200, lockVisaIssueDate ? Ui.AMBER : Ui.DIM);
+                left + 216, top + 214, 280, lockVisaIssueDate ? Ui.AMBER : Ui.DIM);
         Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.visa_expiry", visaExpiryValue()),
-                left + 32, top + 409, 200, lockVisaValidity ? Ui.AMBER : Ui.DIM);
+                left + 216, top + 228, 280, lockVisaValidity ? Ui.AMBER : Ui.DIM);
         Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.visa_hint"),
-                left + 32, top + 421, 440, Ui.DIM);
+                left + 216, top + 244, 280, Ui.DIM);
+    }
+
+    private void renderPresetsTab(GuiGraphics graphics) {
+        presetList.draw(graphics, font, (g, entry, index, x, y, width, height, selected, hovered) -> {
+            CompoundTag values = entry.getCompound("values");
+            DocStyle entryStyle = DocStyle.byId(values.getString("style"));
+            graphics.fill(x, y, x + width, y + height, selected ? 0xFF243A50 : hovered ? 0xFF1A2A3B
+                    : 0x66101A28);
+            if (selected) {
+                graphics.fill(x, y, x + 3, y + height, accent);
+            }
+            graphics.drawString(font, Ui.ellipsis(entry.getString("name"), 220), x + 8, y + 3, Ui.TEXT,
+                    false);
+            graphics.drawString(font, Ui.ellipsis(Component.translatable(entryStyle.displayNameKey())
+                    .getString(), 150), x + 8, y + 15, Ui.MUTED, false);
+            graphics.drawString(font, Ui.ellipsis(values.getString("name"), width - 250), x + 236,
+                    y + 9, Ui.DIM, false);
+            if (entry.getBoolean("registry")) {
+                String badge = Component.translatable("screen.veriborder.issuer.registry_badge").getString();
+                int badgeWidth = font.width(badge) + 8;
+                if (width > badgeWidth + 250) {
+                    graphics.fill(x + width - badgeWidth - 4, y + 5, x + width - 4, y + 17, 0x552FC6B7);
+                    graphics.drawString(font, badge, x + width - badgeWidth, y + 7, Ui.CYAN, false);
+                }
+            }
+        }, mouseUiX, mouseUiY);
+    }
+
+    private double mouseUiX = -1;
+    private double mouseUiY = -1;
+
+    @Override
+    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        this.mouseUiX = toUiX(mouseX);
+        this.mouseUiY = toUiY(mouseY);
+        super.render(graphics, mouseX, mouseY, partialTick);
+    }
+
+    private String effectiveName() {
+        String custom = displayName != null ? displayName.getValue() : formCache.getString("displayName");
+        if (custom == null || custom.isBlank()) {
+            return Component.translatable(style.displayNameKey()).getString();
+        }
+        return custom.trim();
+    }
+
+    /** Preview-only document: never signed or saved, just the live form values. */
+    private DocumentData previewDocument() {
+        CompoundTag tag = formCache.copy();
+        tag.putString("style", style.id());
+        tag.putString("kind", kind.name());
+        if (displayName != null) {
+            tag.putString("displayName", displayName.getValue());
+        }
+        if (name != null) {
+            tag.putString("name", name.getValue());
+        }
+        if (number != null) {
+            tag.putString("number", number.getValue());
+        }
+        if (issue != null) {
+            tag.putString("issueDate", issue.getValue());
+        }
+        if (expiry != null) {
+            tag.putString("expiryDate", expiry.getValue());
+        }
+        if (sex != null) {
+            tag.putString("sex", sex);
+        }
+        if (nationality != null) {
+            tag.putString("nationality", nationality.getValue());
+        }
+        if (birth != null) {
+            tag.putString("birthDate", birth.getValue());
+        }
+        if (authority != null) {
+            tag.putString("authority", authority.getValue());
+        }
+        if (place != null) {
+            tag.putString("placeOfIssue", place.getValue());
+        }
+        if (address != null) {
+            tag.putString("address", address.getValue());
+        }
+        return DocumentData.fromTag(tag);
+    }
+
+    // ------------------------------------------------------------------- input
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (super.mouseClicked(mouseX, mouseY, button)) {
+            return true;
+        }
+        double uiX = toUiX(mouseX);
+        double uiY = toUiY(mouseY);
+        if (tabs != null) {
+            int hit = tabs.hit(uiX, uiY);
+            if (hit >= 0) {
+                int logical = logicalTab(hit);
+                if (logical != tab) {
+                    selectTab(logical);
+                }
+                return true;
+            }
+        }
+        if (tab == TAB_PRESETS && presetList != null && presetList.mouseClicked(uiX, uiY)) {
+            if (presetList.selectedIndex() >= 0) {
+                selectPreset(presetList.selectedIndex());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+        if (dropdownScroll(toUiX(mouseX), toUiY(mouseY), delta)) {
+            return true;
+        }
+        if (tab == TAB_PRESETS && presetList != null
+                && presetList.mouseScrolled(toUiX(mouseX), toUiY(mouseY), delta)) {
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, delta);
     }
 }

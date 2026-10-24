@@ -19,6 +19,8 @@ public enum DeviceType {
     STATION_VERIFIER("station_verifier", Category.READER, ScreenKind.READER, 0x2FC6B7),
     EGATE("egate", Category.GATE, ScreenKind.EGATE, 0x2FC6B7),
     EXIT_GATE("exit_gate", Category.GATE, ScreenKind.EGATE, 0xE0663A),
+    /** One-stop dual-clearance gate (一地两检): exit stage then entry stage. */
+    DUAL_GATE("dual_gate", Category.GATE, ScreenKind.EGATE, 0x1F5E3A),
 
     ENTRY_STAMP("entry_stamp", Category.STAMP, ScreenKind.STAMP_CONFIG, 0xE0A84A),
     EXIT_STAMP("exit_stamp", Category.STAMP, ScreenKind.STAMP_CONFIG, 0xE0A84A),

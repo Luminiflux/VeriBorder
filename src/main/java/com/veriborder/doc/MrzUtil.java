@@ -8,7 +8,20 @@ public final class MrzUtil {
 
     public static String[] generate(DocStyle style, String number, String latinName, String birthDate,
                                     String sex, String expiryDate) {
-        String code = style.mrzCountry();
+        return generate(style, number, latinName, birthDate, sex, expiryDate, "");
+    }
+
+    /**
+     * 26.2: MRZ generation with an issuing-country override. A usable three-letter
+     * code (letters only, any case) replaces the layout's official code; a blank
+     * or unusable value falls back to {@link DocStyle#mrzCountry()}.
+     */
+    public static String[] generate(DocStyle style, String number, String latinName, String birthDate,
+                                    String sex, String expiryDate, String mrzCountry) {
+        String code = countryCode(mrzCountry);
+        if (code.isEmpty()) {
+            code = style.mrzCountry();
+        }
         String cleanedName = sanitizeName(latinName);
         String surname;
         String given;
@@ -50,6 +63,18 @@ public final class MrzUtil {
         }
         String cleaned = name.toUpperCase(Locale.ROOT).replaceAll("[^A-Z /]", "").trim();
         return cleaned.isBlank() ? "HOLDER" : cleaned;
+    }
+
+    /**
+     * Canonical three-letter MRZ country code: upper-case A-Z only, or an empty
+     * string when the value cannot produce a valid MRZ code.
+     */
+    public static String countryCode(String value) {
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value.toUpperCase(Locale.ROOT).replaceAll("[^A-Z]", "");
+        return cleaned.length() == 3 ? cleaned : "";
     }
 
     private static String pad(String value, int length) {

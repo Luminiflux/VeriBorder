@@ -1,5 +1,11 @@
+[CmdletBinding()]
+param(
+    # Optional output root (a directory containing src\main\resources); see
+    # generate_assets.ps1 and tools/check_generators.ps1.
+    [string]$Root
+)
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$root = if ($Root) { (Resolve-Path -LiteralPath $Root).Path } else { Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }
 $recipes = Join-Path $root 'src\main\resources\data\veriborder\recipes'
 New-Item -ItemType Directory -Force $recipes | Out-Null
 $utf8 = [System.Text.UTF8Encoding]::new($false)

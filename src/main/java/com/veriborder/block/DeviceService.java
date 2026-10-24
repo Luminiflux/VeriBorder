@@ -1,8 +1,8 @@
 package com.veriborder.block;
 
+import com.veriborder.border.BorderEntry;
 import com.veriborder.border.BorderLog;
 import com.veriborder.border.BorderService;
-import com.veriborder.border.BorderSession;
 import com.veriborder.doc.DateUtil;
 import com.veriborder.doc.CredentialCode;
 import com.veriborder.doc.VisaRecord;
@@ -10,19 +10,25 @@ import com.veriborder.doc.DocumentData;
 import com.veriborder.doc.DocumentFactory;
 import com.veriborder.doc.DocumentKind;
 import com.veriborder.doc.DocumentStatus;
+import com.veriborder.doc.DocumentTitles;
 import com.veriborder.doc.DocumentValidator;
 import com.veriborder.doc.DocStyle;
 import com.veriborder.doc.EndorsementRecord;
 import com.veriborder.doc.EndorsementType;
+import com.veriborder.doc.MrzUtil;
 import com.veriborder.doc.StampRecord;
+import com.veriborder.doc.TravellerReasons;
 import com.veriborder.doc.VerificationResult;
 import com.veriborder.doc.VisaType;
 import com.veriborder.item.DeviceBrushItem;
 import com.veriborder.item.DocumentItem;
+import com.veriborder.item.DualGateBrushConfig;
 import com.veriborder.network.DeviceActionPacket;
 import com.veriborder.network.ModNetwork;
 import com.veriborder.network.OpenDevicePacket;
+import com.veriborder.registry.CredentialRegistryData;
 import com.veriborder.registry.ModItems;
+import com.veriborder.registry.RegistryService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -42,6 +48,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -85,6 +92,7 @@ public final class DeviceService {
                 }
             }
             case EGATE, EXIT_GATE -> useGate(player, pos, device, held);
+            case DUAL_GATE -> useDualGate(player, pos, device, held);
             case ENTRY_STAMP, EXIT_STAMP -> useStamp(player, pos, device, type, held);
             case STAMP_HISTORY -> openHistory(player, pos, device, held);
             case LOSS_TERMINAL, RENEWAL_MACHINE, PRINT_PREVIEW -> openService(player, pos, device, type, held);
@@ -94,6 +102,17 @@ public final class DeviceService {
 
     private static void openIssuer(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, DeviceType type) {
         CompoundTag payload = payload(device, type);
+        // 26.3 credential registry: the applicant screen reads its nationality /
+        // country selector and template list from the global registry snapshot.
+        DocumentKind kind = switch (type) {
+            case ID_ISSUER -> DocumentKind.ID_CARD;
+            case PASSPORT_ISSUER -> DocumentKind.PASSPORT;
+            case PERMIT_ISSUER -> DocumentKind.PERMIT;
+            default -> null;
+        };
+        CompoundTag registry = RegistryService.issuerPayload(player.getServer(), type.id(), kind);
+        payload.put("registryCountries", registry.getList("countries", Tag.TAG_COMPOUND));
+        payload.put("registryTemplates", registry.getList("templates", Tag.TAG_COMPOUND));
         send(player, pos, type.id(), payload);
     }
 
@@ -102,6 +121,8 @@ public final class DeviceService {
         CompoundTag payload = payload(device, type);
         payload.putBoolean("selfService", type == DeviceType.SELF_VISA);
         payload.putString("machineAuthority", visaMachineAuthority(device));
+        // 26.3 registry: issuing-country selector source.
+        payload.put("registryCountries", RegistryService.countriesTag(player.getServer()));
         ItemStack stack = stackAt(player, slot);
         DocumentData doc = stack == null ? null : DocumentItem.getDocument(stack);
         if (doc != null && doc.kind() == DocumentKind.PASSPORT) {
@@ -128,6 +149,8 @@ public final class DeviceService {
         // authority/template/code/renew/revoke controls.
         payload.putBoolean("selfService", type == DeviceType.SELF_ENDORSEMENT);
         payload.putString("machineAuthority", machineAuthority(device));
+        // 26.3 registry: issuing-country selector source.
+        payload.put("registryCountries", RegistryService.countriesTag(player.getServer()));
         ItemStack stack = stackAt(player, slot);
         DocumentData doc = stack == null ? null : DocumentItem.getDocument(stack);
         if (doc != null && doc.kind() == DocumentKind.PERMIT) {
@@ -190,6 +213,42 @@ public final class DeviceService {
         DeviceType type = device.deviceType();
         CompoundTag payload = payload(device, type);
         payload.putInt("slot", -1);
+        // 26.2 issuer policy: the number lock/region/sequence, MRZ country, the
+        // issue-entry state and the permanent issue codes are administrator
+        // configuration. configTag() already carries them; the explicit puts make
+        // the brush-GUI contract visible in one place and keep the keys stable.
+        payload.putBoolean("lockNumber", device.lockNumber());
+        payload.putString("numberRegion", device.numberRegion());
+        payload.putString("numberSequence", device.numberSequence());
+        payload.putString("mrzCountry", device.mrzCountry());
+        payload.putString("issuerCountry", device.issuerCountry());
+        payload.putBoolean("issueEntryState", device.issueEntryState());
+        payload.put("issueCodes", device.issueCodesTag());
+        // 26.3: dedicated exit codes + the allowed issuing-country whitelist (both
+        // also travel in configTag(); listed here so the brush-GUI contract is
+        // visible in one place). The whitelist is the old permanent-code pass.
+        payload.put("exitCodes", device.exitCodesTag());
+        payload.put("entryCountryCodes", device.entryCountryCodesTag());
+        payload.put("exitCountryCodes", device.exitCountryCodesTag());
+        // Registry snapshot for the issuer country/region selector.
+        payload.put("registryCountries", RegistryService.countriesTag(player.getServer()));
+        // 26.4: registry templates of this machine's kind, so the layout lock also
+        // lists what the registry editor just saved.
+        DocumentKind configKind = switch (type) {
+            case ID_ISSUER -> DocumentKind.ID_CARD;
+            case PASSPORT_ISSUER -> DocumentKind.PASSPORT;
+            case PERMIT_ISSUER -> DocumentKind.PERMIT;
+            default -> null;
+        };
+        if (configKind != null) {
+            payload.put("registryTemplates", RegistryService
+                    .issuerPayload(player.getServer(), type.id(), configKind)
+                    .getList("templates", Tag.TAG_COMPOUND));
+        }
+        // 26.2 nationality lock: document issuers force the holder nationality on
+        // every issue, so the brush GUI shows the toggle and its locked value.
+        payload.putBoolean("lockNationality", device.lockNationality());
+        payload.putString("lockedNationality", device.lockedNationality());
         send(player, pos, "config", payload);
     }
 
@@ -255,7 +314,10 @@ public final class DeviceService {
      * <pre>
      * deviceType String           "manual_terminal"
      * officer    boolean          true
-     * sessions   ListTag          BorderSession compounds, newest entry first
+     * sessions   ListTag          BorderEntry compounds, newest entry first
+     *                             (payload key kept for the 26.2 client; 26.3 shows
+     *                             one row per person, not per document)
+     * entries    ListTag          the same list under its 26.3 name
      * logs       ListTag          BorderLog compounds, newest first
      * </pre>
      */
@@ -267,7 +329,9 @@ public final class DeviceService {
         CompoundTag payload = device == null ? new CompoundTag() : payload(device, DeviceType.MANUAL_TERMINAL);
         payload.putString("deviceType", DeviceType.MANUAL_TERMINAL.id());
         payload.putBoolean("officer", true);
-        payload.put("sessions", BorderService.sessionsTag(player.getServer()));
+        ListTag entries = BorderService.entriesTag(player.getServer());
+        payload.put("sessions", entries);
+        payload.put("entries", entries.copy());
         payload.put("logs", BorderService.logsTag(player.getServer(), BorderService.OFFICER_LOG_LIMIT));
         send(player, pos, "officer", payload);
     }
@@ -285,8 +349,10 @@ public final class DeviceService {
         if ("officer_clear".equals(action)) {
             UUID target = targetUuid(player, data);
             if (target != null) {
-                // Logs an officer entry naming the operator.
-                BorderService.clearSession(player.getServer(), target, BorderService.playerName(player));
+                // Logs an officer entry naming the operator. The console targets an
+                // account; the entry it clears belongs to the person that account
+                // presented, whichever document that entry is bound to.
+                BorderService.clearEntryFor(player.getServer(), target, BorderService.playerName(player));
             }
         }
         BlockEntity blockEntity = player.level().getBlockEntity(pos);
@@ -420,27 +486,50 @@ public final class DeviceService {
     }
 
     /**
-     * Entry gate. The matched visa/endorsement is deliberately <em>not</em>
-     * consumed here: the entry is recorded as a {@link BorderSession} and the
-     * record is only used up by the matching exit. A traveller who is already
-     * inside is always refused, whatever entries the document still shows.
+     * Entry gate entry point: a person who already has an active entry is refused
+     * (26.3: the entry belongs to the person, so presenting a second document does
+     * not open a second entry), then the document is validated against the gate
+     * mode/codes and its country, and a successful check creates the entry and
+     * applies the IN auto stamp.
+     *
+     * <p>The gate country is passed to both the validator and
+     * {@link BorderService#resolveEntry} so a permanent code only opens a gate in
+     * the country it was issued for.</p>
      */
     private static void useEntryGate(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, HeldDocument held) {
-        if (BorderService.session(player) != null) {
+        if (BorderService.findEntry(player, held.data) != null) {
             denyGate(player, pos, device, held, BorderLog.IN, BorderService.REASON_ALREADY_ENTERED);
             return;
         }
-        VerificationResult result = DocumentValidator.validateGate(held.data, device.deviceType(),
-                device.gateMode(), device.gateCodes());
+        // 26.3 registry whitelist: a document issued by an allowed country/region
+        // is a visa-free pass (the old permanent-code slot), so only the document
+        // itself has to be valid — no credential code is required.
+        boolean countryPass = countryBypass(held.data, device.entryCountryCodes());
+        VerificationResult result = countryPass
+                ? DocumentValidator.validate(held.data, device.deviceType(), "")
+                : DocumentValidator.validateGate(held.data, device.deviceType(),
+                device.gateMode(), device.gateCodes(), device.country());
         if (!result.valid()) {
-            // Code/mode failures are rejected before the gate state machine starts,
-            // and the chat message names the required mode or the mismatched code.
-            BorderService.deny(player, pos, held.data, null, BorderLog.IN, firstReason(result));
-            sendGateCheck(player, pos, device, result);
+            // Code/mode failures are rejected before the gate state machine starts.
+            // When the gate has a visa-free country whitelist and the document's
+            // issuing country is not on it, that is the reason the traveller is
+            // told (and the code the officer log keeps).
+            VerificationResult denial = result;
+            String reason = firstReason(result);
+            if (!device.entryCountryCodes().isEmpty()
+                    && result.code() == VerificationResult.Code.NO_MATCHING_CODE) {
+                reason = DocumentValidator.REASON_COUNTRY_NOT_VISA_FREE;
+                denial = VerificationResult.fail(result.code(), reason).withDetail(result.detail());
+            }
+            BorderService.deny(player, pos, held.data, null, BorderLog.IN, reason);
+            sendGateCheck(player, pos, device, denial);
             return;
         }
-        BorderService.EntryMatch match = BorderService.resolveEntry(held.data, device.gateMode(),
-                device.gateCodes());
+        BorderService.EntryMatch match = countryPass
+                ? new BorderService.EntryMatch(BorderEntry.KIND_VISA_FREE, "",
+                held.data.issuerCountry())
+                : BorderService.resolveEntry(held.data, device.gateMode(),
+                device.gateCodes(), device.country());
         if (match == null) {
             // Defensive: validation passed but no credential could be bound.
             BorderService.deny(player, pos, held.data, null, BorderLog.IN,
@@ -459,44 +548,335 @@ public final class DeviceService {
     }
 
     /**
-     * Exit gate. Reads the stored session (gate codes/mode are ignored) and
-     * consumes exactly the record that entry bound; visa-free and
-     * {@code all}-mode entries consume nothing.
+     * Read-only outcome of the shared exit stage (single exit gate and the dual
+     * gate's exit stage). {@code allowed} means the traveller may leave; the
+     * decision never mutates the document, the entry or the world, so both gate
+     * kinds run exactly the same rules before anything is committed.
+     *
+     * @param reason      denial reason translation key ("" when allowed)
+     * @param check       verification result for the gate UI
+     * @param recordIndex index of the entry-bound credential record, or -1
+     * @param kind        credential kind of the entry (visa/endorsement/...)
+     * @param staleCredential the entry's credential exists but its derived state is
+     *                        EXPIRED/EXHAUSTED/REVOKED. 26.3 round 12: the exit is
+     *                        still allowed (a traveller must never be trapped) and
+     *                        is flagged as an overstay instead.
+     */
+    public record ExitStage(boolean allowed, String reason, VerificationResult check, int recordIndex,
+                            String kind, boolean staleCredential) {
+        static ExitStage allow(int recordIndex, String kind, VerificationResult check) {
+            return new ExitStage(true, "", check, recordIndex, kind, false);
+        }
+
+        static ExitStage allow(int recordIndex, String kind, VerificationResult check, boolean staleCredential) {
+            return new ExitStage(true, "", check, recordIndex, kind, staleCredential);
+        }
+
+        static ExitStage deny(String reason, VerificationResult check) {
+            return new ExitStage(false, reason, check, -1, BorderEntry.KIND_NONE, false);
+        }
+
+        /** The departure must be logged as an OVERSTAY. */
+        public boolean overstay() {
+            return allowed && staleCredential;
+        }
+    }
+
+    /**
+     * Exit gate. Restores the "exit code" mechanism: the traveller needs an
+     * active entry, the presented document must belong to the same person and be
+     * valid, and the document must carry one of the gate's exit codes (unless the
+     * gate has no exit codes, or the entry is a visa-free/permanent-code entry
+     * that entered before exit codes were configured). The code match is
+     * read-only; on success exactly the record that entry bound is consumed once,
+     * then the entry is finished and the OUT stamp is written.
+     *
+     * <p>26.3: the entry identifies the <em>person</em>, so a document of the same
+     * holder with a different number (a renewed passport) is accepted via
+     * {@link BorderService#sameTraveller}. The bound credential record only exists
+     * on the document the entry was recorded on, so it is required (and consumed)
+     * only for that document; the exit log always names the document actually used.</p>
      */
     private static void useExitGate(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, HeldDocument held) {
-        BorderSession session = BorderService.session(player);
-        if (session == null) {
-            denyGate(player, pos, device, held, BorderLog.OUT, BorderService.REASON_NO_ENTRY_RECORD);
+        BorderEntry entry = BorderService.findEntry(player, held.data);
+        ExitStage stage = exitStage(held.data, entry, device.exitCodes(), device.exitCountryCodes());
+        if (!stage.allowed()) {
+            denyExit(player, pos, device, held, entry, stage);
             return;
         }
-        if (!session.documentNumber().equals(held.data.number())) {
-            denyGate(player, pos, device, held, BorderLog.OUT, BorderService.REASON_SESSION_DOCUMENT_MISMATCH);
-            return;
-        }
-        VerificationResult result = DocumentValidator.validateGate(held.data, DeviceType.EXIT_GATE, "", List.of());
-        if (!result.valid()) {
-            BorderService.deny(player, pos, held.data, session, BorderLog.OUT, firstReason(result));
-            sendGateCheck(player, pos, device, result);
-            return;
-        }
-        int recordIndex = boundRecordIndex(held.data, session);
-        if (session.consumesRecord() && recordIndex < 0) {
-            denyGate(player, pos, device, held, BorderLog.OUT, BorderService.REASON_SESSION_RECORD_MISSING);
-            return;
-        }
-        if (!device.startVerification(player, result)) {
+        if (!device.startVerification(player, stage.check())) {
             message(player, "message.veriborder.gate.busy");
             return;
         }
-        if (recordIndex >= 0) {
-            consumeBoundRecord(player, held, session.kind(), recordIndex);
+        if (stage.recordIndex() >= 0) {
+            consumeBoundRecord(player, held, entry.kind(), stage.recordIndex());
         }
-        boolean overstay = BorderService.finishExit(player, session, pos);
+        // The entry is cleared on exit, so a renewed document needs no update;
+        // the log names the document that actually left. A document that expired
+        // during the stay — or a credential that expired / ran out — is still
+        // allowed out, flagged as an overstay.
+        boolean overstay = BorderService.finishExit(player, entry, pos, held.data.number(),
+                held.data.isExpired() || stage.overstay());
         autoGateStamp(player, device, held, StampRecord.OUT);
         if (overstay) {
             // The exit is still allowed; the warning plus the OVERSTAY log record it.
             player.displayClientMessage(Component.translatable(BorderService.MESSAGE_OVERSTAY), false);
         }
+    }
+
+    /**
+     * Pure exit-stage decision shared by the single exit gate and the dual gate.
+     * <strong>Read-only:</strong> it never consumes a record, clears an entry or
+     * writes anything; the caller commits only after {@code allowed}.
+     *
+     * <p>Rules, in order:</p>
+     * <ol>
+     *   <li>an active entry exists (else {@code no_entry_record});</li>
+     *   <li>the presented document belongs to the same traveller;</li>
+     *   <li>the document itself is valid — a merely <em>expired</em> document is
+     *       allowed to leave (the exit is flagged as an overstay);</li>
+     *   <li>the document's issuing country is on the exit allowed-country
+     *       whitelist → pass directly (visa-free pass); otherwise, when the exit
+     *       code list is non-empty, the document must carry one of those codes.
+     *       An empty exit-code list means "no restriction";</li>
+     *   <li>the entry document still carries the record the entry bound.</li>
+     * </ol>
+     *
+     * @param exitCodes           the gate's dedicated exit-code list (empty = no restriction)
+     * @param allowedCountryCodes the gate's allowed issuing-country whitelist for the exit stage
+     */
+    public static ExitStage exitStage(@Nullable DocumentData doc, @Nullable BorderEntry entry,
+                                      Collection<String> exitCodes, Collection<String> allowedCountryCodes) {
+        if (doc == null || entry == null) {
+            return ExitStage.deny(BorderService.REASON_NO_ENTRY_RECORD,
+                    VerificationResult.fail(VerificationResult.Code.NOT_APPLICABLE,
+                            BorderService.REASON_NO_ENTRY_RECORD));
+        }
+        if (!BorderService.sameTraveller(entry, doc)) {
+            return ExitStage.deny(BorderService.REASON_SESSION_DOCUMENT_MISMATCH,
+                    VerificationResult.fail(VerificationResult.Code.NOT_APPLICABLE,
+                            BorderService.REASON_SESSION_DOCUMENT_MISMATCH));
+        }
+        // Exit is tolerant of an expired document: a traveller whose credential
+        // ran out while inside must still be able to leave (flagged as overstay).
+        VerificationResult base = DocumentValidator.validateExit(doc);
+        if (!base.valid()) {
+            return ExitStage.deny(firstReason(base), base);
+        }
+        List<String> codes = CredentialCode.normalizeAll(exitCodes);
+        // 26.3: an empty exit-code list means "no restriction"; the country
+        // whitelist is checked first and passes the traveller directly.
+        if (!codes.isEmpty()
+                && !countryBypass(doc, allowedCountryCodes)
+                && !carriesAnyCode(doc, codes)) {
+            return ExitStage.deny("verify.veriborder.reason.no_matching_code",
+                    VerificationResult.fail(VerificationResult.Code.NO_MATCHING_CODE,
+                            "verify.veriborder.reason.no_matching_code"));
+        }
+        int recordIndex = boundRecordIndex(doc, entry, true);
+        // 26.3 round 12 exit tolerance: a credential that ran out or expired while
+        // the traveller was inside must not trap them. A present-but-unusable
+        // record still lets the traveller leave and the departure is logged as an
+        // OVERSTAY instead (same rule the expired document already follows).
+        boolean staleCredential = recordIndex < 0 && boundRecordIndex(doc, entry, false) >= 0;
+        if (BorderService.isEntryDocument(entry, doc) && entry.consumesRecord() && recordIndex < 0
+                && !staleCredential) {
+            return ExitStage.deny(BorderService.REASON_SESSION_RECORD_MISSING,
+                    VerificationResult.fail(VerificationResult.Code.NOT_APPLICABLE,
+                            BorderService.REASON_SESSION_RECORD_MISSING));
+        }
+        VerificationResult ok = VerificationResult.ok(entry.code());
+        return ExitStage.allow(recordIndex, entry.kind(), ok, staleCredential);
+    }
+
+    /** Convenience overload without an exit allowed-country whitelist. */
+    public static ExitStage exitStage(@Nullable DocumentData doc, @Nullable BorderEntry entry,
+                                      Collection<String> exitCodes) {
+        return exitStage(doc, entry, exitCodes, List.of());
+    }
+
+    /**
+     * True when the document's issuing country ({@link DocumentData#issuerCountry()})
+     * is on the gate's allowed-country whitelist. A hit is a visa-free pass: it
+     * satisfies entry checks without a credential code and exempts the exit-code
+     * match, exactly like the old permanent-code slot did.
+     */
+    public static boolean countryBypass(@Nullable DocumentData doc, @Nullable Collection<String> allowedCountryCodes) {
+        if (doc == null || allowedCountryCodes == null || allowedCountryCodes.isEmpty()) {
+            return false;
+        }
+        // mrzCountry() is the same single field for new documents and falls back
+        // to the legacy mrzCountry / layout code on pre-registry documents, so an
+        // older passport still matches its own issuing country.
+        String country = MrzUtil.countryCode(doc.mrzCountry());
+        if (country.isEmpty()) {
+            return false;
+        }
+        for (String allowed : allowedCountryCodes) {
+            if (country.equals(MrzUtil.countryCode(allowed))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True when the document carries any of {@code codes} (read-only). */
+    public static boolean carriesAnyCode(DocumentData doc, Collection<String> codes) {
+        if (doc == null || codes == null || codes.isEmpty()) {
+            return false;
+        }
+        List<String> wanted = CredentialCode.normalizeAll(codes);
+        if (wanted.isEmpty()) {
+            return false;
+        }
+        return wanted.stream().anyMatch(doc.allCredentialCodes()::contains);
+    }
+
+    /** Logs + sends the denial payload for a failed shared exit stage. */
+    private static void denyExit(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, HeldDocument held,
+                                 @Nullable BorderEntry entry, ExitStage stage) {
+        BorderService.deny(player, pos, held.data, entry, BorderLog.OUT, stage.reason());
+        sendGateCheck(player, pos, device, stage.check());
+    }
+
+
+    /**
+     * Dual-clearance gate (一地两检): one right-click runs two stages.
+     *
+     * <ol>
+     *   <li><b>Exit stage</b>: exactly the shared {@link #exitStage} decision the
+     *       single exit gate uses — an active {@link BorderEntry}, the same
+     *       traveller, a valid document, a matching exit code (brush
+     *       {@code exitCodes}, falling back to the gate's generic codes) and the
+     *       entry's bound record still present. The record check only applies when
+     *       the presented document <em>is</em> the entry document.</li>
+     *   <li><b>Entry stage</b>: the document is checked again as a normal gate
+     *       document, then {@link BorderService#resolveEntry} is called with the
+     *       brush-configured entry mode/codes and the gate country (a permanent
+     *       code only matches a gate in its own country).</li>
+     * </ol>
+     *
+     * <p>Both stages are validated <em>before</em> anything is written: a failure
+     * at either stage denies the traveller and leaves the entry untouched
+     * (exit failure = no entry, entry failure = the original entry is kept).
+     * Only when both stages pass are the OUT stamp (exit identity), the entry
+     * exit, the new entry and the IN stamp (entry identity) committed, so a
+     * half-cleared traveller can never be produced.</p>
+     *
+     * <p>Audio and animation are the stock gate ones: {@code startVerification}
+     * clicks the read head and the shared gate state machine opens the doors /
+     * buzzes on failure. No particles are spawned.</p>
+     */
+    private static void useDualGate(ServerPlayer player, BlockPos pos, DeviceBlockEntity device,
+                                    @Nullable HeldDocument held) {
+        if (held == null) {
+            openGateStatus(player, pos, device, DeviceType.DUAL_GATE);
+            return;
+        }
+        CompoundTag config = device.dualGateConfig();
+        // Unset identity fields fall back to the gate's own port/country/officer,
+        // so a freshly placed dual gate works before it is brushed.
+        String exitAuthority = identity(config.getString(DualGateBrushConfig.EXIT_AUTHORITY), device.country());
+        String exitOfficer = identity(config.getString(DualGateBrushConfig.EXIT_OFFICER), device.officer());
+        String exitPort = identity(config.getString(DualGateBrushConfig.EXIT_PORT), device.port());
+        String entryAuthority = identity(config.getString(DualGateBrushConfig.ENTRY_AUTHORITY), device.country());
+        String entryOfficer = identity(config.getString(DualGateBrushConfig.ENTRY_OFFICER), device.officer());
+        String entryPort = identity(config.getString(DualGateBrushConfig.ENTRY_PORT), device.port());
+        String entryMode = DualGateBrushConfig.normalizeMode(config.getString(DualGateBrushConfig.ENTRY_MODE));
+        // The two stages own separate code lists. An empty stage list falls back
+        // to the gate's generic list, so a device-brush-provisioned gate still
+        // matches records exactly like before.
+        List<String> deviceCodes = device.gateCodes();
+        List<String> entryCodes = dualGateEntryCodes(config, deviceCodes);
+
+        // ---- stage 1: exit preconditions (read-only) --------------------
+        // The exit stage is the same shared decision the single exit gate uses:
+        // active entry + same traveller + valid document + exit-code match + bound
+        // record still present. It never consumes anything.
+        BorderEntry entry = BorderService.findEntry(player, held.data);
+        ExitStage exit = exitStage(held.data, entry, DualGateBrushConfig.exitCodes(config),
+                DualGateBrushConfig.exitCountryCodes(config));
+        if (!exit.allowed()) {
+            denyExit(player, pos, device, held, entry, exit);
+            return;
+        }
+        int recordIndex = exit.recordIndex();
+
+        // ---- stage 2: entry preconditions (read-only) -------------------
+        // Base document validity first (kind/status/dates/integrity); the mode
+        // match itself is resolved by BorderService so the permanent-code slot
+        // works for visa / endorsement / both as well.
+        VerificationResult entryCheck = DocumentValidator.validate(held.data, DeviceType.DUAL_GATE, "");
+        if (!entryCheck.valid()) {
+            BorderService.deny(player, pos, held.data, entry, BorderLog.IN, firstReason(entryCheck));
+            sendGateCheck(player, pos, device, entryCheck);
+            return;
+        }
+        BorderService.EntryMatch match = countryBypass(held.data,
+                DualGateBrushConfig.countryCodes(config))
+                ? new BorderService.EntryMatch(BorderEntry.KIND_VISA_FREE, "",
+                held.data.issuerCountry())
+                : BorderService.resolveEntry(held.data, entryMode, entryCodes, device.country());
+        if (match == null) {
+            // Same two-track reason rule as the single gate: with a visa-free
+            // country whitelist configured, "country not visa-free" is the real
+            // reason; otherwise it is a credential-code mismatch.
+            String reason = DualGateBrushConfig.countryCodes(config).isEmpty()
+                    ? DocumentValidator.REASON_GATE_CODE_MISMATCH
+                    : DocumentValidator.REASON_COUNTRY_NOT_VISA_FREE;
+            BorderService.deny(player, pos, held.data, entry, BorderLog.IN, reason);
+            sendGateCheck(player, pos, device, VerificationResult.fail(
+                    VerificationResult.Code.NO_MATCHING_CODE, reason));
+            return;
+        }
+
+        // ---- both stages passed: commit --------------------------------
+        if (!device.startVerification(player, VerificationResult.ok(match.code()))) {
+            message(player, "message.veriborder.gate.busy");
+            return;
+        }
+        if (recordIndex >= 0) {
+            consumeBoundRecord(player, held, entry.kind(), recordIndex);
+        }
+        boolean overstay = BorderService.finishExit(player, entry, pos, held.data.number(),
+                held.data.isExpired() || exit.overstay());
+        dualGateStamp(player, held, StampRecord.OUT, exitPort, exitAuthority, exitOfficer);
+        BorderService.beginEntry(player, pos, entryPort, device.overstayDays(), held.data, match);
+        dualGateStamp(player, held, StampRecord.IN, entryPort, entryAuthority, entryOfficer);
+        if (overstay) {
+            // The exit is still allowed; the warning plus the OVERSTAY log record it.
+            player.displayClientMessage(Component.translatable(BorderService.MESSAGE_OVERSTAY), false);
+        }
+        message(player, "message.veriborder.gate.verifying");
+    }
+
+    /**
+     * Entry-stage code list for a dual gate: the brush's own {@code entryCodes}
+     * when it has any, otherwise the gate's generic code list. (The exit stage
+     * has no such fallback in 26.3: an empty exit list means "no restriction".)
+     */
+    public static List<String> dualGateEntryCodes(CompoundTag config, List<String> deviceCodes) {
+        List<String> codes = DualGateBrushConfig.codes(config);
+        if (!codes.isEmpty()) {
+            return codes;
+        }
+        return deviceCodes == null ? List.of() : deviceCodes;
+    }
+
+    /** Writes one dual-gate stamp with the stage identity (passport/permit only). */
+    private static void dualGateStamp(ServerPlayer player, HeldDocument held, String direction,
+                                      String port, String authority, String officer) {
+        if (!DocumentValidator.isStampable(held.data.kind())) {
+            return;
+        }
+        held.data.addStamp(direction, port, authority, officer);
+        DocumentItem.writeDocument(held.stack, held.data);
+        sync(player, held.slot, held.stack);
+    }
+
+    /** Configured identity value, or the gate's own value when unset. */
+    private static String identity(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     private static void openGateStatus(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, DeviceType type) {
@@ -506,23 +886,36 @@ public final class DeviceService {
         send(player, pos, type.id(), payload);
     }
 
-    /** Index of the session-bound record in the presented document, or -1. */
-    private static int boundRecordIndex(DocumentData doc, BorderSession session) {
-        if (BorderSession.KIND_VISA.equals(session.kind())) {
+    /** Index of the entry-bound record in the presented document, or -1. */
+    private static int boundRecordIndex(DocumentData doc, BorderEntry entry) {
+        return boundRecordIndex(doc, entry, true);
+    }
+
+    /**
+     * Index of the entry-bound record.
+     *
+     * @param requireUsable when true only a currently usable (derived
+     *                      {@code VALID}) record counts; false also finds an
+     *                      expired / used-up / revoked record, which the exit
+     *                      stage tolerates and flags as an overstay instead of
+     *                      trapping the traveller
+     */
+    private static int boundRecordIndex(DocumentData doc, BorderEntry entry, boolean requireUsable) {
+        if (BorderEntry.KIND_VISA.equals(entry.kind())) {
             List<CompoundTag> tags = doc.visaTags();
             for (int i = 0; i < tags.size(); i++) {
                 VisaRecord record = VisaRecord.fromTag(tags.get(i));
-                if (record.active() && sameRecord(session, record.id(), record.code())) {
+                if ((!requireUsable || record.active()) && sameRecord(entry, record.id(), record.code())) {
                     return i;
                 }
             }
             return -1;
         }
-        if (BorderSession.KIND_ENDORSEMENT.equals(session.kind())) {
+        if (BorderEntry.KIND_ENDORSEMENT.equals(entry.kind())) {
             List<CompoundTag> tags = doc.endorsementTags();
             for (int i = 0; i < tags.size(); i++) {
                 EndorsementRecord record = EndorsementRecord.fromTag(tags.get(i));
-                if (record.active() && sameRecord(session, record.id(), record.code())) {
+                if ((!requireUsable || record.active()) && sameRecord(entry, record.id(), record.code())) {
                     return i;
                 }
             }
@@ -533,22 +926,30 @@ public final class DeviceService {
 
     /**
      * Identity of the bound record: the stored record id wins; the eight-digit
-     * code is only used for sessions without an id (visa-free or legacy).
+     * code is only used for entries without an id (permanent code or legacy).
      */
-    private static boolean sameRecord(BorderSession session, String id, String code) {
-        if (!session.recordId().isBlank()) {
-            return session.recordId().equals(id);
+    private static boolean sameRecord(BorderEntry entry, String id, String code) {
+        if (!entry.recordId().isBlank()) {
+            return entry.recordId().equals(id);
         }
-        return !session.code().isBlank() && session.code().equals(code);
+        return !entry.code().isBlank() && entry.code().equals(code);
     }
 
-    /** Increments {@code usedEntries} on exactly one record and persists it. */
-    private static void consumeBoundRecord(ServerPlayer player, HeldDocument held, String kind, int index) {
-        DocumentData doc = held.data;
-        if (BorderSession.KIND_VISA.equals(kind)) {
+    /**
+     * Increments {@code usedEntries} on exactly one record and re-signs the
+     * document. Pure data-level seam shared by the gates and their tests: no
+     * player, world or item stack involved.
+     *
+     * @return {@code true} when a record was consumed
+     */
+    public static boolean consumeBoundRecord(DocumentData doc, String kind, int index) {
+        if (doc == null) {
+            return false;
+        }
+        if (BorderEntry.KIND_VISA.equals(kind)) {
             List<CompoundTag> tags = doc.visaTags();
             if (index < 0 || index >= tags.size()) {
-                return;
+                return false;
             }
             CompoundTag tag = tags.get(index);
             // Persist the effective code (legacy records derive it from their id)
@@ -556,19 +957,28 @@ public final class DeviceService {
             tag.putString("code", VisaRecord.fromTag(tag).code());
             tag.putInt("usedEntries", tag.getInt("usedEntries") + 1);
             doc.updateVisa(index, tag);
-        } else if (BorderSession.KIND_ENDORSEMENT.equals(kind)) {
+            return true;
+        }
+        if (BorderEntry.KIND_ENDORSEMENT.equals(kind)) {
             List<CompoundTag> tags = doc.endorsementTags();
             if (index < 0 || index >= tags.size()) {
-                return;
+                return false;
             }
             CompoundTag tag = tags.get(index);
             tag.putString("code", EndorsementRecord.fromTag(tag).code());
             tag.putInt("usedEntries", tag.getInt("usedEntries") + 1);
             doc.updateEndorsement(index, tag);
-        } else {
+            return true;
+        }
+        return false;
+    }
+
+    /** Consumes the entry-bound record and persists the item stack. */
+    private static void consumeBoundRecord(ServerPlayer player, HeldDocument held, String kind, int index) {
+        if (!consumeBoundRecord(held.data, kind, index)) {
             return;
         }
-        DocumentItem.writeDocument(held.stack, doc);
+        DocumentItem.writeDocument(held.stack, held.data);
         sync(player, held.slot, held.stack);
     }
 
@@ -596,24 +1006,35 @@ public final class DeviceService {
         payload.putString("gateMessage", "gate.veriborder.denied");
         payload.put("check", result.save());
         send(player, pos, device.deviceType().id(), payload);
-        player.displayClientMessage(result.message(), false);
+        // Two-track reason (26.3 round 12): the payload keeps the administrator
+        // reason codes, the traveller only ever sees a plain-language sentence.
+        player.displayClientMessage(Component.translatable(
+                TravellerReasons.of(result, device.gateMode())), false);
     }
 
     /**
-     * Session-level denial (already entered, no entry record, document
-     * mismatch, record missing). Logs the attempt and shows the plain reason;
-     * the gate stays idle and is not animated.
+     * Session-level denial (already entered, no entry record, person/document
+     * mismatch, record missing). Logs the attempt with its reason code and shows
+     * the traveller-facing sentence; the gate stays idle and is not animated.
      */
     private static void denyGate(ServerPlayer player, BlockPos pos, DeviceBlockEntity device, HeldDocument held,
                                  String direction, String reasonKey) {
-        BorderService.deny(player, pos, held.data, BorderService.session(player), direction, reasonKey);
+        BorderService.deny(player, pos, held.data, BorderService.findEntry(player, held.data), direction,
+                reasonKey);
+        sendGateDenied(player, pos, device, reasonKey);
+    }
+
+    /** Plain gate denial payload: idle state, failure check, translated chat reason. */
+    private static void sendGateDenied(ServerPlayer player, BlockPos pos, DeviceBlockEntity device,
+                                       String reasonKey) {
         VerificationResult check = VerificationResult.fail(VerificationResult.Code.NOT_APPLICABLE, reasonKey);
         CompoundTag payload = payload(device, device.deviceType());
         payload.putString("gateState", device.gateState().name());
         payload.putString("gateMessage", "gate.veriborder.denied");
         payload.put("check", check.save());
         send(player, pos, device.deviceType().id(), payload);
-        player.displayClientMessage(Component.translatable(reasonKey), false);
+        player.displayClientMessage(Component.translatable(
+                TravellerReasons.key(reasonKey, device.gateMode())), false);
     }
 
     private static CompoundTag payload(DeviceBlockEntity device, DeviceType type) {
@@ -706,6 +1127,11 @@ public final class DeviceService {
     }
 
     public static void handleAction(ServerPlayer player, BlockPos pos, String action, CompoundTag data, int slot) {
+        // Credential-registry actions are world-level (no device) and OP-gated, so
+        // they are routed before the block-entity lookup.
+        if (RegistryService.handleAction(player, action, data)) {
+            return;
+        }
         // Officer console actions are OP-only and independent of the block they
         // were opened from, so they are handled before the device lookup.
         if ("officer_clear".equals(action) || "officer_refresh".equals(action)) {
@@ -721,6 +1147,7 @@ public final class DeviceService {
             return;
         }
         switch (action) {
+            case "save_dual_gate" -> saveDualGateConfig(player, device, data);
             case "issue_document" -> issueDocument(player, device, data);
             case "save_preset" -> {
                 device.savePreset(data.getString("presetName"), stripPresetMeta(data));
@@ -751,7 +1178,26 @@ public final class DeviceService {
                     device.setGateMode(data.getString("gateMode"));
                     // Codes are the only gate validation source. The block entity
                     // validates 8 digits and dedupes; the list has no length limit.
-                    device.setGateCodes(data.getList("gateCodes", Tag.TAG_STRING));
+                    // The key is optional: an exit-gate screen keeps the stored
+                    // fallback list instead of clearing it.
+                    if (data.contains("gateCodes")) {
+                        device.setGateCodes(data.getList("gateCodes", Tag.TAG_STRING));
+                    }
+                    // 26.3 exit gate restore: the dedicated exit-code list and the
+                    // permanent case-by-case exemption list are optional payload
+                    // keys, so an older/other screen never resets them.
+                    if (data.contains("exitCodes")) {
+                        device.setExitCodes(data.getList("exitCodes", Tag.TAG_STRING));
+                    }
+                    if (data.contains("entryCountryCodes")) {
+                        device.setEntryCountryCodes(data.getList("entryCountryCodes", Tag.TAG_STRING));
+                    }
+                    if (data.contains("exitCountryCodes")) {
+                        device.setExitCountryCodes(data.getList("exitCountryCodes", Tag.TAG_STRING));
+                    }
+                    if (data.contains("issuerCountry")) {
+                        device.setIssuerCountry(data.getString("issuerCountry"));
+                    }
                     // 26.1 gate behaviour. Applied only when the screen sends the
                     // keys, so an older client cannot silently reset the defaults.
                     if (data.contains("autoStamp")) {
@@ -762,6 +1208,11 @@ public final class DeviceService {
                     }
                 }
                 if (device.deviceType().isIssuer()) {
+                    // 26.3 registry: the machine's issuing-country code (shared by
+                    // every issuer type, not just document issuers).
+                    if (data.contains("issuerCountry")) {
+                        device.setIssuerCountry(data.getString("issuerCountry"));
+                    }
                     device.setLockDocumentName(data.getBoolean("lockDocumentName"));
                     device.setLockedDocumentName(data.getString("lockedDocumentName"));
                     device.setLockAuthority(data.getBoolean("lockAuthority"));
@@ -777,6 +1228,13 @@ public final class DeviceService {
                     applyIssuerLockConfig(device, data);
                 }
                 message(player, "message.veriborder.config.saved");
+                // 26.4: the client resolved a template-backed layout lock before
+                // sending it; when the template had already been deleted it fell
+                // back to the first official layout of the machine's kind. Say so
+                // instead of silently saving a different layout.
+                if (data.getBoolean("lockedStyleFallback")) {
+                    message(player, "message.veriborder.config.locked_style_fallback");
+                }
                 // The client closes the brush config screen after saving; do not
                 // reopen an operational GUI here (that would surprise the player).
             }
@@ -807,6 +1265,33 @@ public final class DeviceService {
     }
 
     /**
+     * Device-mode save of the dual-clearance editor: the exact same schema the
+     * dual-gate brush writes, applied to a placed dual gate. OP level 2 and the
+     * device brush are re-checked server-side; the payload is sanitised by
+     * {@link DualGateBrushConfig} before it reaches the block entity.
+     */
+    private static void saveDualGateConfig(ServerPlayer player, DeviceBlockEntity device, CompoundTag data) {
+        if (device.deviceType() != DeviceType.DUAL_GATE) {
+            message(player, "message.veriborder.dual_gate_brush.not_gate");
+            return;
+        }
+        if (!player.hasPermissions(2)) {
+            message(player, "message.veriborder.permission.denied");
+            return;
+        }
+        if (!holdsBrush(player)) {
+            message(player, "message.veriborder.brush.required");
+            return;
+        }
+        device.setDualGateConfig(DualGateBrushConfig.sanitize(data));
+        device.changed();
+        device.sync();
+        player.level().playSound(null, device.getBlockPos(), SoundEvents.VILLAGER_WORK_CARTOGRAPHER,
+                SoundSource.BLOCKS, 0.7F, 1.2F);
+        message(player, "message.veriborder.dual_gate_brush.saved");
+    }
+
+    /**
      * Persists the per-device-type 1.2.1 lock fields from the brush config
      * payload. Reading a key only for the device kinds that actually show the
      * control keeps a value that is not part of this screen untouched.
@@ -823,7 +1308,42 @@ public final class DeviceService {
                 || type == DeviceType.SELF_ENDORSEMENT;
         if (documentIssuer) {
             device.setLockStyle(data.getBoolean("lockStyle"));
+            // 26.4: setLockedStyle validates the id (DocStyle.byIdOrNull) and
+            // stores "" for an unusable value, so a stale/template value can
+            // never reject the whole configuration save.
             device.setLockedStyle(data.getString("lockedStyle"));
+            if (data.contains("lockedStyleTemplate")) {
+                device.setLockedStyleTemplate(data.getString("lockedStyleTemplate"));
+            }
+            // 26.2 issuer policy, now administrator configuration rather than an
+            // applicant toggle. Keys are optional so an older/other screen cannot
+            // silently reset a value it does not display.
+            if (data.contains("lockNumber")) {
+                device.setLockNumber(data.getBoolean("lockNumber"));
+            }
+            if (data.contains("numberRegion")) {
+                device.setNumberRegion(data.getString("numberRegion"));
+            }
+            if (data.contains("numberSequence")) {
+                device.setNumberSequence(data.getString("numberSequence"));
+            }
+            if (data.contains("mrzCountry")) {
+                device.setMrzCountry(data.getString("mrzCountry"));
+            }
+            if (data.contains("issueEntryState")) {
+                device.setIssueEntryState(data.getBoolean("issueEntryState"));
+            }
+            if (data.contains("issueCodes")) {
+                device.setIssueCodes(data.getList("issueCodes", Tag.TAG_STRING));
+            }
+            // 26.2 nationality lock. Only document issuers expose it, and the keys
+            // are optional so an older/other screen cannot reset the stored value.
+            if (data.contains("lockNationality")) {
+                device.setLockNationality(data.getBoolean("lockNationality"));
+            }
+            if (data.contains("lockedNationality")) {
+                device.setLockedNationality(data.getString("lockedNationality"));
+            }
         }
         if (visaIssuer) {
             // PASSPORT_ISSUER also locks the visa attached on issue.
@@ -913,10 +1433,12 @@ public final class DeviceService {
         }
         DocStyle style = DocStyle.byId(data.getString("style"));
         DocStyle lockedStyle = device.lockedStyleOrNull();
+        boolean lockedLayout = false;
         if (device.lockStyle() && lockedStyle != null && lockedStyle.kind() == expected) {
             // A valid lock replaces the submitted layout; a malicious client
             // cannot switch an ID issuer to a passport layout.
             style = lockedStyle;
+            lockedLayout = true;
         } else if (style.kind() != expected) {
             message(player, "message.veriborder.issuer.wrong_style");
             return;
@@ -925,20 +1447,91 @@ public final class DeviceService {
         // the form, so a client that ignores the lock still cannot issue a
         // different document name, authority, place or date.
         CompoundTag form = data.copy();
-        if (device.lockDocumentName() && !device.lockedDocumentName().isBlank()) {
-            form.putString("displayName", device.lockedDocumentName());
+        // 26.4 fix: the document-name lock is resolved entirely from the device.
+        // The trusted "lockedDisplayName" key carries the administrator's title
+        // and the applicant form can neither supply nor unlock it.
+        form = applyLockedDocumentName(device.locks(), form);
+        if (lockedLayout) {
+            // 26.4: a layout lock backed by a registry template also carries the
+            // template's colour/icon. A template deleted since configuration
+            // contributes nothing — the layout lock keeps working on its own.
+            applyLockedStyleTemplate(form, RegistryService.templateById(
+                    player.getServer(), device.lockedStyleTemplate()), style);
         }
         if (device.lockAuthority() && !device.lockedAuthority().isBlank()) {
             form.putString("authority", device.lockedAuthority());
         }
+        // 26.2 nationality lock: the device, never the applicant form, decides the
+        // holder nationality. A forged form field is overwritten before the factory
+        // reads it, and a blank locked value is a no-op (same rule as the GUI).
+        if (device.lockNationality() && !device.lockedNationality().isBlank()) {
+            form.putString("nationality", device.lockedNationality());
+        }
         if (device.lockPlace() && !device.lockedPlace().isBlank()) {
             form.putString("placeOfIssue", device.lockedPlace());
         }
-        if (device.lockIssueDate() && DateUtil.isValid(device.lockedIssueDate())) {
-            form.putString("issueDate", device.lockedIssueDate());
+        // 26.2 issue-date lock: authoritative even when the admin left the value
+        // blank ("blank = issue day"). The applicant form date is overwritten
+        // before the factory reads it; the locked validity / permit endorsement
+        // below then recompute from this forced date.
+        form = applyIssueDateLock(device.locks(), form);
+        // 26.2 issuer policy is resolved from the device, never from the applicant
+        // form: a client cannot unlock its own number, pick a region/sequence or
+        // inject permanent codes. The applicant screen no longer offers them.
+        form.putBoolean("lockNumber", device.lockNumber());
+        form.putString("numberRegion", device.numberRegion());
+        form.putString("numberSequence", device.numberSequence());
+        if (device.lockNumber()) {
+            form.putString("number", "");
+        }
+        form.remove("visaFreeCodes");
+        // 26.3 round 12: one issuing-country field for every document kind, decided
+        // by the machine's single country selector. The form and finally the layout
+        // code are fallbacks only. The old port/officer/airport country text fields
+        // and the legacy MRZ-country policy no longer take part in issuing (their
+        // NBT is kept on the block entity but ignored here).
+        String issuerCountry = device.issuerCountry();
+        if (issuerCountry.isBlank()) {
+            issuerCountry = MrzUtil.countryCode(form.getString("issuerCountry"));
+        }
+        if (issuerCountry.isBlank()) {
+            issuerCountry = RegistryService.resolveIssuerCountryCode(player.getServer(), "", form);
+        }
+        if (issuerCountry.isBlank()) {
+            issuerCountry = MrzUtil.countryCode(form.getString("mrzCountry"));
+        }
+        if (issuerCountry.isBlank()) {
+            issuerCountry = style.mrzCountry();
+        }
+        form.putString("issuerCountry", issuerCountry);
+        form.remove("mrzCountry");
+        // 26.3 round 12 (issue machine nationality binding): the machine's single
+        // country selector decides BOTH values, so the holder nationality is
+        // derived from the same registry country as the MRZ issuing code. The
+        // applicant cannot pick a nationality that disagrees with the machine, and
+        // the superseded "nationality lock" NBT is no longer applied.
+        String machineNationality = RegistryService.nationalityFor(player.getServer(), issuerCountry);
+        if (!machineNationality.isBlank()) {
+            form.putString("nationality", machineNationality);
         }
         form.putString("style", style.id());
         DocumentData doc = DocumentFactory.fromForm(style, form);
+        // Remember the issuer's title policy on the signed document so the border
+        // terminal can grey out the custom display name instead of silently
+        // violating lockDocumentName.
+        doc.setString("nameLocked", device.lockDocumentName() ? "true" : "false");
+        // 26.3 permanent-code slot: passports and permits only. A domestic
+        // identity card has no "return to the issuing country" credential, so the
+        // configured codes are not copied onto it (the device keeps them for its
+        // passport/permit issues). Each code is scoped to the device's country:
+        // "return home" only opens a gate in that country, which is exactly what
+        // an immigration code means.
+        if (expected != DocumentKind.ID_CARD) {
+            for (String code : device.issueCodes()) {
+                doc.addPermanentCode(code, device.country(),
+                        DocumentData.PermanentPurpose.RETURN_HOME, "");
+            }
+        }
         if (device.lockValidity()) {
             // 0/permanent styles stay permanent; positive years win over the
             // style default and over any form-supplied expiry date.
@@ -947,8 +1540,7 @@ public final class DeviceService {
         if (expected == DocumentKind.PERMIT && form.contains("initialEndorsementType")
                 && !form.getString("initialEndorsementType").isBlank()) {
             EndorsementType endorsementType = EndorsementType.byId(form.getString("initialEndorsementType"));
-            String today = device.lockIssueDate() && DateUtil.isValid(device.lockedIssueDate())
-                    ? device.lockedIssueDate() : DateUtil.today();
+            String today = lockedIssueDate(device, DateUtil.today());
             String authority = device.lockAuthority() && !device.lockedAuthority().isBlank()
                     ? device.lockedAuthority() : style.defaultAuthority();
             boolean fixedCode = device.lockEndorsementCode()
@@ -988,7 +1580,35 @@ public final class DeviceService {
         }
         player.level().playSound(null, player.blockPosition(), SoundEvents.VILLAGER_WORK_CARTOGRAPHER,
                 SoundSource.PLAYERS, 0.7F, 1.1F);
-        message(player, "message.veriborder.issuer.issued", Component.translatable(style.displayNameKey()), doc.number());
+        // The entry must bind the document that was ACTUALLY written to the item
+        // (its number is final by now), not the pre-write form.
+        DocumentData issuedDoc = DocumentItem.getDocument(stack);
+        if (issuedDoc == null) {
+            issuedDoc = doc;
+        }
+        String issuedNumber = issuedDoc.number();
+        // 26.4 display fix: the "issued" chat line names the DOCUMENT as it was
+        // actually written — the issuer-locked / custom name when there is one —
+        // and only falls back to the official layout name, instead of always
+        // reporting the layout ("已签发 中国香港特别行政区护照" for a doc titled TEST).
+        String officialName = Component.translatable(style.displayNameKey()).getString();
+        String issuedTitle = DocumentTitles.issuedLabel(issuedDoc.displayName(), officialName);
+        message(player, "message.veriborder.issuer.issued", Component.literal(issuedTitle), issuedNumber);
+        // 26.2/26.3: a freshly issued PASSPORT/PERMIT may start the holder in the
+        // entry state so an exit gate is immediately usable. An ID card is a
+        // domestic document: it never creates an entry record. A stale entry of the
+        // same person is replaced (not skipped), so the exit gate matches the
+        // document just issued.
+        BorderEntry previous = BorderService.entry(player);
+        if (BorderService.shouldAdoptIssuedEntry(expected, device.issueEntryState(), previous, issuedNumber)) {
+            if (previous == null) {
+                BorderService.beginEntry(player, device.getBlockPos(), device.port(), device.overstayDays(),
+                        issuedDoc, BorderService.EntryMatch.none());
+            } else {
+                BorderService.replaceEntry(player, device.getBlockPos(), device.port(), device.overstayDays(),
+                        issuedDoc, BorderService.EntryMatch.none());
+            }
+        }
     }
 
     /**
@@ -1232,10 +1852,92 @@ public final class DeviceService {
         return form;
     }
 
+    /**
+     * Applies the terminal's issue-date lock to a submitted issuer form. A locked
+     * device always decides the date: the stored value when it is a real date,
+     * otherwise the issue day ({@link DateUtil#today()}), so an empty locked value
+     * means "issued today" instead of "no lock". The submitted form date only
+     * survives when the lock is off. Pure, so the rule is unit-testable.
+     */
+    public static CompoundTag applyIssueDateLock(DeviceBlockEntity.Locks locks, CompoundTag values) {
+        DeviceBlockEntity.Locks settings = locks == null ? DeviceBlockEntity.Locks.NONE : locks;
+        CompoundTag form = values == null ? new CompoundTag() : values.copy();
+        if (settings.lockIssueDate()) {
+            form.putString("issueDate", lockedIssueDate(settings, DateUtil.today()));
+        }
+        return form;
+    }
+
     /** The locked issue date when enabled and valid, otherwise {@code fallback}. */
+    public static String lockedIssueDate(DeviceBlockEntity.Locks settings, String fallback) {
+        if (settings == null || !settings.lockIssueDate()) {
+            return fallback;
+        }
+        String value = settings.lockedIssueDate();
+        return DateUtil.isValid(value) ? value.trim() : fallback;
+    }
+
+    /**
+     * 26.4 document-name lock. The device always decides: the trusted
+     * {@link DocumentFactory#LOCKED_DISPLAY_NAME} key carries the administrator's
+     * locked title, the applicant's {@code displayName} and custom cover are
+     * dropped while the lock is on, and the {@code lockDocumentName} flag itself
+     * is overwritten so a forged form can neither unlock a lock nor fake one.
+     *
+     * <p>Every trusted key is scrubbed here (including the registry-template
+     * colour/icon), so a client-supplied value never survives; the caller then
+     * re-injects the device's own values via {@link #applyLockedStyleTemplate}.</p>
+     *
+     * <p>A blank locked title is meaningful: the factory then keeps the official
+     * preset name. Pure (no block entity/world access), so every rule is
+     * unit-testable.</p>
+     */
+    public static CompoundTag applyLockedDocumentName(DeviceBlockEntity.Locks locks, CompoundTag values) {
+        DeviceBlockEntity.Locks settings = locks == null ? DeviceBlockEntity.Locks.NONE : locks;
+        CompoundTag form = values == null ? new CompoundTag() : values.copy();
+        form.remove(DocumentFactory.LOCKED_DISPLAY_NAME);
+        form.remove(DocumentFactory.LOCKED_STYLE_COLOR);
+        form.remove(DocumentFactory.LOCKED_STYLE_ICON);
+        form.putBoolean("lockDocumentName", settings.lockDocumentName());
+        if (settings.lockDocumentName()) {
+            // The trusted key replaces the client's title; a forged custom cover
+            // cannot leak a different name onto the document either.
+            form.remove("displayName");
+            form.remove("customStyle");
+            form.putString(DocumentFactory.LOCKED_DISPLAY_NAME, settings.lockedDocumentName());
+        }
+        return form;
+    }
+
+    /**
+     * 26.4 registry-template layout lock: copies the locked template's colour and
+     * icon onto the (already trusted) issuer form so the issued document carries
+     * the operator's template, not just its base layout. The template is resolved
+     * again at issue time, and a {@code null} (deleted) template or one whose
+     * layout no longer matches the locked style contributes nothing. Pure.
+     */
+    public static CompoundTag applyLockedStyleTemplate(CompoundTag values,
+                                                       @Nullable CredentialRegistryData.Template template,
+                                                       DocStyle style) {
+        CompoundTag form = values == null ? new CompoundTag() : values;
+        if (template == null || style == null) {
+            return form;
+        }
+        if (!template.style().equals(style.id()) || template.kind() != style.kind()) {
+            // The template was re-pointed at another layout: the lock still uses
+            // the stored layout, so its colour/icon must not contradict it.
+            return form;
+        }
+        form.putInt(DocumentFactory.LOCKED_STYLE_COLOR, template.color() & 0x00FFFFFF);
+        String icon = template.icon() == null ? "" : template.icon().trim();
+        if (!icon.isBlank()) {
+            form.putString(DocumentFactory.LOCKED_STYLE_ICON, icon);
+        }
+        return form;
+    }
+
     private static String lockedIssueDate(DeviceBlockEntity device, String fallback) {
-        return device.lockIssueDate() && DateUtil.isValid(device.lockedIssueDate())
-                ? device.lockedIssueDate().trim() : fallback;
+        return device == null ? fallback : lockedIssueDate(device.locks(), fallback);
     }
 
     private static void issueEndorsement(ServerPlayer player, BlockPos pos, DeviceBlockEntity device,
@@ -1426,7 +2128,7 @@ public final class DeviceService {
             case ID_ISSUER, PASSPORT_ISSUER, PERMIT_ISSUER -> openIssuer(player, pos, device, type);
             case VISA_ISSUER, SELF_VISA -> openVisa(player, pos, device, slot);
             case ENDORSEMENT_MACHINE, SELF_ENDORSEMENT -> openEndorsement(player, pos, device, type, slot);
-            case EGATE, EXIT_GATE -> openGateStatus(player, pos, device, type);
+            case EGATE, EXIT_GATE, DUAL_GATE -> openGateStatus(player, pos, device, type);
             case ENTRY_STAMP, EXIT_STAMP -> {
                 if (held != null) {
                     sendStampResult(player, pos, device, type, held);
@@ -1484,7 +2186,9 @@ public final class DeviceService {
         incoming.sign();
         DocumentItem.writeDocument(stack, incoming);
         sync(player, slot, stack);
-        message(player, "message.veriborder.modifier.saved", incoming.name());
+        message(player, "message.veriborder.modifier.saved",
+                Component.literal(DocumentTitles.issuedLabel(incoming.displayName(),
+                        Component.translatable(incoming.style().displayNameKey()).getString())));
     }
 
     private static void message(ServerPlayer player, String key, Object... arguments) {

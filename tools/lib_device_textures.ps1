@@ -785,41 +785,235 @@ function New-Screen2Texture([string]$path, [int]$w, [int]$h, $d, [string]$style)
 }
 
 # --------------------------------------------------------------- gate signage
-# Only the band v 8..12 (pixels y 32..48) is sampled by the 16x4 sign board in
-# the gate model (uv [0,8,16,12]), so the lettering is drawn there at a 4:1
-# pixel aspect and stays readable in game.
+# The sign board samples the whole 64 x 64 texture (square UV), so the board is
+# drawn edge to edge: dark surround, cyan frame, large ENTRY / EXIT lettering.
 function New-GateSignTexture([string]$path, $d) {
     $accent = Col $d.accent
     $bg = Col $d.bg
     $bmp, $g = New-Bitmap 64 64
-    Fill-Rect $g 0 0 64 64 (C 9 14 18)
-    Fill-Rect $g 0 32 64 16 (Blend $bg (C 255 255 255) 0.05)
-    Fill-Rect $g 0 32 64 1 $accent
-    Fill-Rect $g 0 47 64 1 (Blend $accent (C 0 0 0) 0.55)
-    Fill-Rect $g 0 32 1 16 $accent
-    Fill-Rect $g 63 32 1 16 $accent
-    Fill-Rect $g 1 33 62 1 (Blend $accent (C 255 255 255) 0.22)
-    Draw-TextCentered $g $d.sign (Font 13) (C 255 255 255) 2 33 60
-    for ($i = 0; $i -lt 5; $i++) {
-        Fill-Rect $g (26 + $i * 3) 45 2 1 (Blend $accent (C 255 255 255) 0.3)
+    Fill-Rect $g 0 0 64 64 (C 8 11 14)
+    Fill-Rect $g 2 2 60 60 (Blend $bg (C 255 255 255) 0.06)
+    Fill-Rect $g 0 0 64 2 $accent
+    Fill-Rect $g 0 62 64 2 (Blend $accent (C 0 0 0) 0.6)
+    Fill-Rect $g 0 0 2 64 $accent
+    Fill-Rect $g 62 0 2 64 $accent
+    Fill-Rect $g 2 2 60 1 (Blend $accent (C 255 255 255) 0.45)
+    Draw-TextCentered $g $d.sign (Font 20) (C 255 255 255) 2 13 60
+    for ($i = 0; $i -lt 7; $i++) {
+        Fill-Rect $g (17 + $i * 4) 45 3 2 (Blend $accent (C 255 255 255) 0.3)
     }
     if ($d.sign -eq 'EXIT') {
-        Fill-Rect $g 3 35 2 2 (C 226 80 76)
-        Fill-Rect $g 59 35 2 2 (C 226 80 76)
+        Fill-Rect $g 6 8 3 3 (C 226 80 76)
+        Fill-Rect $g 55 8 3 3 (C 226 80 76)
     } else {
-        Fill-Rect $g 3 35 2 2 (C 96 232 156)
-        Fill-Rect $g 59 35 2 2 (C 96 232 156)
+        Fill-Rect $g 6 8 3 3 (C 96 232 156)
+        Fill-Rect $g 55 8 3 3 (C 96 232 156)
     }
+    Save-Bitmap $bmp $g $path
+}
+
+# ------------------------------------------------------ gate-only flat panels
+# The gate pillars are 4 x 17 px faces, so the generic device surfaces (vents,
+# accent bars, screws) would stretch into long stripes. Gate bodies/trim use
+# near-uniform matte panels with only horizontal brush lines, which stay clean
+# at any face size; all detail on the gates comes from geometry.
+function New-GateBodyTexture([string]$path, $d) {
+    $base = Col $d.base
+    $base2 = Col $d.base2
+    $bmp, $g = New-Bitmap 32 32
+    Fill-Rect $g 0 0 32 32 $base
+    for ($y = 0; $y -lt 32; $y++) {
+        $t = $y / 31.0
+        Fill-Rect $g 0 $y 32 1 (Blend $base (Blend $base $base2 0.5) ($t * 0.5))
+    }
+    Fill-Rect $g 0 0 32 1 (Blend $base (C 255 255 255) 0.55)
+    Fill-Rect $g 0 31 32 1 (Blend $base2 (C 22 26 30) 0.2)
+    Fill-Rect $g 0 0 1 32 (Blend $base2 (C 22 26 30) 0.09)
+    Fill-Rect $g 31 0 1 32 (Blend $base2 (C 22 26 30) 0.09)
+    Fill-Rect $g 5 9 1 1 (Blend $base2 (C 22 26 30) 0.05)
+    Fill-Rect $g 23 21 1 1 (Blend $base (C 255 255 255) 0.3)
+    Save-Bitmap $bmp $g $path
+}
+
+function New-GateBody2Texture([string]$path, $d) {
+    $base2 = Col $d.base2
+    $base = Col $d.base
+    $bmp, $g = New-Bitmap 32 32
+    Fill-Rect $g 0 0 32 32 $base2
+    for ($y = 0; $y -lt 32; $y++) {
+        $t = $y / 31.0
+        Fill-Rect $g 0 $y 32 1 (Blend (Blend $base2 (C 255 255 255) 0.12) $base2 ($t * 0.9))
+    }
+    for ($y = 3; $y -lt 31; $y += 5) {
+        Fill-Rect $g 1 $y 30 1 (Blend $base2 (C 28 32 36) 0.12)
+        Fill-Rect $g 1 ($y + 1) 30 1 (Blend $base2 (C 255 255 255) 0.22)
+    }
+    Fill-Rect $g 0 0 32 1 (Blend $base2 (C 255 255 255) 0.55)
+    Fill-Rect $g 0 31 32 1 (Blend $base2 (C 22 26 30) 0.25)
+    Save-Bitmap $bmp $g $path
+}
+
+function New-GateTrimTexture([string]$path, $d) {
+    $trim = Col $d.trim
+    $bmp, $g = New-Bitmap 32 32
+    Fill-Rect $g 0 0 32 32 $trim
+    for ($y = 0; $y -lt 32; $y++) {
+        $t = $y / 31.0
+        Fill-Rect $g 0 $y 32 1 (Blend (Blend $trim (C 255 255 255) 0.18) (Blend $trim (C 0 0 0) 0.25) $t)
+    }
+    for ($y = 2; $y -lt 31; $y += 3) {
+        Fill-Rect $g 0 $y 32 1 (Blend $trim (C 255 255 255) 0.07)
+    }
+    Fill-Rect $g 0 0 32 1 (Blend $trim (C 255 255 255) 0.45)
+    Fill-Rect $g 0 31 32 1 (C 8 10 12)
+    Fill-Rect $g 0 0 1 32 (C 8 10 12)
+    Fill-Rect $g 31 0 1 32 (C 8 10 12)
+    Save-Bitmap $bmp $g $path
+}
+
+function New-GateTopTexture([string]$path, $d) {
+    $trim = Col $d.trim
+    $bmp, $g = New-Bitmap 32 32
+    Fill-Rect $g 0 0 32 32 (Blend $trim (C 0 0 0) 0.15)
+    for ($y = 0; $y -lt 32; $y++) {
+        $t = $y / 31.0
+        Fill-Rect $g 0 $y 32 1 (Blend (Blend $trim (C 255 255 255) 0.1) (Blend $trim (C 0 0 0) 0.3) $t)
+    }
+    Fill-Rect $g 0 0 32 1 (Blend $trim (C 255 255 255) 0.38)
+    for ($i = 0; $i -lt 4; $i++) {
+        Fill-Rect $g 4 (8 + $i * 5) 24 1 (Blend $trim (C 255 255 255) 0.06)
+    }
+    Save-Bitmap $bmp $g $path
+}
+
+# Light frosted gate-door pane: pale cyan-white, very low contrast, a couple of
+# soft diagonal reflections. Deliberately smooth so the closed door reads as
+# glazing inside the dark metal frame instead of a noisy wall.
+function New-GateLeafTexture([string]$path, $d) {
+    $ac = Col $d.accent
+    $bmp, $g = New-Bitmap 32 32
+    for ($y = 0; $y -lt 32; $y++) {
+        $t = $y / 31.0
+        Fill-Rect $g 0 $y 32 1 (Blend (C 228 243 247) (C 198 224 232) ($t * 0.85))
+    }
+    Draw-Line $g 2 27 20 4 (C 248 254 255) 1
+    Draw-Line $g 5 30 24 7 (C 244 252 255) 1
+    Draw-Line $g 16 31 30 15 (C 240 250 252) 1
+    Fill-Rect $g 0 0 32 1 (C 250 255 255)
+    Fill-Rect $g 0 31 32 1 (C 172 200 210)
+    Fill-Rect $g 0 0 1 32 (C 240 250 253)
+    Fill-Rect $g 31 0 1 32 (C 206 228 235)
+    Fill-Rect $g 2 2 7 2 (Blend $ac (C 255 255 255) 0.72)
+    Save-Bitmap $bmp $g $path
+}
+# ------------------------------------------------------- gate-only LED / UI kit
+# Cyan LED strip: bright emissive band. The gate maps this onto 0.36 px tall
+# strips, so the bright rows 8..24 keep the line glowing after minification.
+function New-CyanTexture([string]$path, $d) {
+    $bmp, $g = New-Bitmap 32 32
+    for ($i = 0; $i -lt 32; $i++) {
+        $t = [Math]::Abs($i - 16) / 16.0
+        Fill-Rect $g 0 $i 32 1 (Blend (C 58 224 248) (C 8 38 46) ($t * $t))
+    }
+    Fill-Rect $g 0 7 32 18 (C 86 235 252)
+    Fill-Rect $g 0 11 32 10 (C 150 248 255)
+    Fill-Rect $g 0 14 32 4 (C 226 255 255)
+    Fill-Rect $g 0 15 32 2 (C 255 255 255)
+    Save-Bitmap $bmp $g $path
+}
+
+# Green direction matrix: full 64 x 64 texture (square UV) with three chevrons
+# pointing +u. The wide, short cap-face panel turns them into a shallow LED
+# matrix, matching the reference's nose display.
+function New-ArrowTexture([string]$path, $d) {
+    $bmp, $g = New-Bitmap 64 64
+    Fill-Rect $g 0 0 64 64 (C 4 16 11)
+    Fill-Rect $g 1 1 62 62 (C 6 32 21)
+    Fill-Rect $g 1 1 62 2 (C 30 120 84)
+    Fill-Rect $g 1 61 62 2 (C 30 120 84)
+    for ($k = 0; $k -lt 3; $k++) {
+        $x = 6 + $k * 18
+        $pts = [System.Drawing.Point[]]@(
+            [System.Drawing.Point]::new(($x + 2), 7),
+            [System.Drawing.Point]::new(($x + 17), 32),
+            [System.Drawing.Point]::new(($x + 2), 57),
+            [System.Drawing.Point]::new(($x + 2), 46),
+            [System.Drawing.Point]::new(($x + 9), 32),
+            [System.Drawing.Point]::new(($x + 2), 18)
+        )
+        $b = Brush (C 62 236 138); $g.FillPolygon($b, $pts); $b.Dispose()
+        $pts2 = [System.Drawing.Point[]]@(
+            [System.Drawing.Point]::new(($x + 2), 14),
+            [System.Drawing.Point]::new(($x + 12), 32),
+            [System.Drawing.Point]::new(($x + 2), 50),
+            [System.Drawing.Point]::new(($x + 2), 43),
+            [System.Drawing.Point]::new(($x + 6), 32),
+            [System.Drawing.Point]::new(($x + 2), 23)
+        )
+        $b = Brush (C 214 255 226); $g.FillPolygon($b, $pts2); $b.Dispose()
+    }
+    Save-Bitmap $bmp $g $path
+}
+
+# Portrait tablet reader UI, full 64 x 64 (square UV). The model panel is a tall
+# portrait rectangle, so wide, short shapes are used here: after mapping they
+# read as a lit portrait display with a face-scan chip, data rows and a big
+# green approval check.
+function New-TabletTexture([string]$path, $d) {
+    $ac = Col $d.accent
+    $bg = Col $d.bg
+    $fg = Col $d.fg
+    $pale = Blend $fg $bg 0.28
+    $dim = Blend $fg $bg 0.55
+    $bmp, $g = New-Bitmap 64 64
+    Fill-Rect $g 0 0 64 64 (Blend $bg (C 255 255 255) 0.05)
+    Fill-Rect $g 0 0 64 64 (Blend $ac $bg 0.08)
+    Fill-Rect $g 0 0 64 5 (Blend $ac (C 255 255 255) 0.1)
+    Fill-Rect $g 0 5 64 1 (Blend $ac (C 255 255 255) 0.3)
+    Fill-Rect $g 0 0 2 64 (Blend $ac (C 255 255 255) 0.35)
+    Fill-Rect $g 62 0 2 64 (Blend $ac (C 255 255 255) 0.35)
+    for ($i = 0; $i -lt 4; $i++) { Fill-Rect $g (3 + $i * 4) 1 2 2 $pale }
+    Fill-Rect $g 44 2 16 1 $pale
+    # wide face-scan chip (round after portrait compression)
+    Fill-Rect $g 4 10 36 20 (Blend $fg $bg 0.85)
+    Fill-Rect $g 4 10 36 1 $pale
+    $face = Brush (Blend $bg $fg 0.55)
+    $g.FillEllipse($face, 13, 13, 18, 12)
+    $g.FillRectangle($face, 9, 24, 26, 4)
+    $face.Dispose()
+    # data rows to the right of the chip
+    for ($i = 0; $i -lt 4; $i++) {
+        Fill-Rect $g 42 (11 + $i * 5) 18 2 $dim
+        Fill-Rect $g 42 (13 + $i * 5) 12 1 (Blend $fg $bg 0.4)
+    }
+    # approval check (wide ellipse + thick check)
+    $p = Pen (C 74 234 150) 3
+    $g.DrawEllipse($p, 6, 34, 28, 18)
+    $g.DrawLine($p, 12, 43, 18, 48)
+    $g.DrawLine($p, 18, 48, 30, 37)
+    $p.Dispose()
+    # status lines and barcode
+    for ($i = 0; $i -lt 5; $i++) { Fill-Rect $g 39 (37 + $i * 3) 21 1 (Blend $fg $bg 0.45) }
+    for ($i = 0; $i -lt 10; $i++) { Fill-Rect $g (4 + $i * 2) 56 1 5 (Blend $fg $bg 0.25) }
+    Fill-Rect $g 39 56 21 2 (Blend $fg $bg 0.35)
+    Fill-Rect $g 39 60 21 2 $ac
     Save-Bitmap $bmp $g $path
 }
 
 # ------------------------------------------------------------------- driver
 function New-DeviceTextures($d) {
     $id = $d.id
-    New-BodyTexture (Join-Path $blockTex "${id}_body.png") $d
-    New-Body2Texture (Join-Path $blockTex "${id}_body2.png") $d
-    New-TrimTexture (Join-Path $blockTex "${id}_trim.png") $d
-    New-TopTexture (Join-Path $blockTex "${id}_top.png") $d
+    if ($d.gate) {
+        New-GateBodyTexture (Join-Path $blockTex "${id}_body.png") $d
+        New-GateBody2Texture (Join-Path $blockTex "${id}_body2.png") $d
+        New-GateTrimTexture (Join-Path $blockTex "${id}_trim.png") $d
+        New-GateTopTexture (Join-Path $blockTex "${id}_top.png") $d
+    } else {
+        New-BodyTexture (Join-Path $blockTex "${id}_body.png") $d
+        New-Body2Texture (Join-Path $blockTex "${id}_body2.png") $d
+        New-TrimTexture (Join-Path $blockTex "${id}_trim.png") $d
+        New-TopTexture (Join-Path $blockTex "${id}_top.png") $d
+    }
     New-AccentTexture (Join-Path $blockTex "${id}_accent.png") $d
     New-DetailTexture (Join-Path $blockTex "${id}_detail.png") $d
     New-LedTexture (Join-Path $blockTex "${id}_led.png") $d
@@ -828,5 +1022,10 @@ function New-DeviceTextures($d) {
     New-WarningTexture (Join-Path $blockTex "${id}_warning.png") $d
     New-ScreenTexture (Join-Path $blockTex "${id}_screen.png") ($d.px1)[0] ($d.px1)[1] $d $d.style
     New-Screen2Texture (Join-Path $blockTex "${id}_screen2.png") ($d.px2)[0] ($d.px2)[1] $d $d.style
-    if ($d.gate) { New-GateSignTexture (Join-Path $blockTex "${id}_sign.png") $d }
+    if ($d.gate) {
+        New-GateSignTexture (Join-Path $blockTex "${id}_sign.png") $d
+        New-CyanTexture (Join-Path $blockTex "${id}_cyan.png") $d
+        New-ArrowTexture (Join-Path $blockTex "${id}_arrow.png") $d
+        New-TabletTexture (Join-Path $blockTex "${id}_tablet.png") $d`r`n        New-GateLeafTexture (Join-Path $blockTex "${id}_leaf.png") $d
+    }
 }

@@ -1,0 +1,13 @@
+﻿{
+    "id":  "entry_stamp",
+    "model_json":  "C:\\Users\\GhostBubbles\\Documents\\deepseek-harness\\default-workspace\\VeriBorder\\src\\main\\resources\\assets\\veriborder\\models\\block\\entry_stamp.json",
+    "out_dir":  "C:\\Users\\GhostBubbles\\Documents\\deepseek-harness\\default-workspace\\VeriBorder\\assets\\blender\\entry_stamp",
+    "palette":  {
+                    "base":  "#F3EBDD",
+                    "base2":  "#E7D6BC",
+                    "trim":  "#5B4C3A",
+                    "accent":  "#D98A2B",
+                    "fg":  "#FFD9A0",
+                    "bg":  "#1C1206"
+                }
+}

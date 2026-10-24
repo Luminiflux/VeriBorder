@@ -1,9 +1,13 @@
 package com.veriborder.client;
 
+import com.veriborder.client.ui.Dropdown;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Renderable;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +28,21 @@ public abstract class VeriScreen extends Screen {
     protected int left;
     protected int top;
     protected final List<LabeledField> labeledFields = new ArrayList<>();
+    /**
+     * Shared dropdowns of the current build (26.4). They are not widgets: the
+     * base screen paints them above every widget and forwards clicks, the wheel
+     * and keyboard input, so a screen only creates the control and reacts to its
+     * value.
+     */
+    protected final List<Dropdown> dropdowns = new ArrayList<>();
+    /**
+     * Widgets that stay put while a scrollable page moves (footer buttons). They
+     * are painted after the clipped content pass, so a row scrolled underneath
+     * them can never cover the save / cancel buttons.
+     */
+    protected final List<AbstractWidget> fixedWidgets = new ArrayList<>();
+    private int contentClipTop = Integer.MIN_VALUE;
+    private int contentClipBottom = Integer.MAX_VALUE;
     protected int accent = Ui.CYAN;
     protected float uiScale = 1.0F;
     protected float uiOffsetX = 0.0F;
@@ -50,14 +69,168 @@ public abstract class VeriScreen extends Screen {
         this.left = 0;
         this.top = 0;
         this.labeledFields.clear();
-        this.build();
+        this.dropdowns.clear();
+        this.fixedWidgets.clear();
+        this.contentClipTop = Integer.MIN_VALUE;
+        this.contentClipBottom = Integer.MAX_VALUE;
+        // 26.4 repair: a throw inside build() used to leave a half-built screen
+        // with no widgets at all and no trace in the log. Log it loudly and keep
+        // whatever was already added, so the page stays usable and the cause is
+        // one grep away.
+        try {
+            this.build();
+        } catch (RuntimeException | Error failure) {
+            org.slf4j.LoggerFactory.getLogger("VeriBorder").error(
+                    "VeriBorder: screen build failed for {}", this.getClass().getName(), failure);
+            this.buildFailure = failure.getMessage() == null
+                    ? failure.getClass().getSimpleName() : failure.getMessage();
+            throw failure;
+        }
+    }
+
+    /** Message of the exception that aborted {@link #build()}, or {@code null}. */
+    private String buildFailure;
+
+    /**
+     * Registers a widget that must not scroll: it is excluded from the clipped
+     * content pass and painted afterwards, on top of the scrolled rows.
+     */
+    protected <T extends AbstractWidget> T addFixedWidget(T widget) {
+        addRenderableWidget(widget);
+        fixedWidgets.add(widget);
+        return widget;
+    }
+
+    /**
+     * Enables the clipped scroll band. Content widgets are clipped to this band
+     * and a click outside it never reaches a scrolled widget (the fixed footer
+     * widgets stay clickable). {@code top >= bottom} disables the clip.
+     */
+    protected void setContentClip(int top, int bottom) {
+        int low = Math.min(top, bottom);
+        int high = Math.max(top, bottom);
+        // 26.4 repair: bad band maths (an inverted or zero-height band, or one
+        // entirely outside the panel) used to clip every widget away and leave a
+        // blank page. A band that cannot show at least two rows is simply
+        // disabled instead of swallowing the whole page.
+        int panel = imageHeight > 0 ? imageHeight : high;
+        low = Math.max(low, 0);
+        high = Math.min(high, panel);
+        if (high - low < 40) {
+            this.contentClipTop = Integer.MIN_VALUE;
+            this.contentClipBottom = Integer.MAX_VALUE;
+            return;
+        }
+        this.contentClipTop = low;
+        this.contentClipBottom = high;
+    }
+
+    protected boolean isContentClipped()
+        {
+            // 26.4 rollback: the clip band broke widget rendering, so the
+            // scroll/clip pass is disabled until it is redesigned.
+            return false;
+        }
+
+    /** True when a design-space y falls inside the scrollable band. */
+    protected boolean insideContentBand(double uiY) {
+        return !isContentClipped() || (uiY >= contentClipTop && uiY <= contentClipBottom);
+    }
+
+    /** True when a design-space point is over a fixed (non-scrolling) widget. */
+    private boolean overFixedWidget(double uiX, double uiY) {
+        for (AbstractWidget widget : fixedWidgets) {
+            if (widget.visible && uiX >= widget.getX() && uiX <= widget.getX() + widget.getWidth()
+                    && uiY >= widget.getY() && uiY <= widget.getY() + widget.getHeight()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Runs content painting inside the scroll band, so text or a label chip of a
+     * half-scrolled row can never be painted over the header. Screens without a
+     * scroll band just run the action.
+     */
+    /**
+     * Converts a design-space content band into the window-space rectangle the
+     * scissor test expects. {@code GuiGraphics.enableScissor} ignores the current
+     * pose, so passing design coordinates directly clipped every widget away on
+     * a scaled or offset panel (the 26.4 "blank page" regression).
+     */
+    private int[] screenBand(int bandTop, int bandBottom) {
+        int x = Math.round(uiOffsetX + left * uiScale);
+        int y = Math.round(uiOffsetY + bandTop * uiScale);
+        int width = Math.round(imageWidth * uiScale);
+        int height = Math.round((bandBottom - bandTop) * uiScale);
+        return new int[]{x, y, width, Math.max(1, height)};
+    }
+
+    protected void withContentClip(GuiGraphics graphics, Runnable action) {
+        if (action == null) {
+            return;
+        }
+        if (!isContentClipped()) {
+            action.run();
+            return;
+        }
+        int[] band = screenBand(contentClipTop, contentClipBottom);
+        Ui.scissor(graphics, band[0], band[1], band[0] + band[2], band[1] + band[3]);
+        try {
+            action.run();
+        } finally {
+            graphics.disableScissor();
+        }
+    }
+
+    /** Registers a dropdown so the base screen paints and drives it. */
+    protected <T extends Dropdown> T addDropdown(T dropdown) {
+        dropdowns.add(dropdown);
+        return dropdown;
+    }
+
+    protected void closeDropdownsExcept(@Nullable Dropdown keep) {
+        for (Dropdown dropdown : dropdowns) {
+            if (dropdown != keep) {
+                dropdown.setOpen(false);
+            }
+        }
+    }
+
+    /** Forwards a click to the dropdowns first; {@code true} when one consumed it. */
+    protected boolean dropdownClick(double uiX, double uiY) {
+        for (int i = dropdowns.size() - 1; i >= 0; i--) {
+            Dropdown dropdown = dropdowns.get(i);
+            if (dropdown.mouseClicked(uiX, uiY)) {
+                if (dropdown.isOpen()) {
+                    closeDropdownsExcept(dropdown);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Forwards the wheel to an open dropdown panel (long lists scroll). */
+    protected boolean dropdownScroll(double uiX, double uiY, double delta) {
+        for (int i = dropdowns.size() - 1; i >= 0; i--) {
+            Dropdown dropdown = dropdowns.get(i);
+            if (dropdown.isOpen() && dropdown.mouseScrolled(uiX, uiY, delta)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static float scaleFor(int screenWidth, int screenHeight, int designWidth, int designHeight) {
         float fitX = (screenWidth - 8.0F) / designWidth;
         float fitY = (screenHeight - 8.0F) / designHeight;
         float scale = Math.min(1.0F, Math.min(fitX, fitY));
-        return Math.max(0.5F, scale);
+        // 26.3 screens grew to fit the dual-gate whitelists (560px design height);
+        // a 0.4 floor still fits an 854x480 viewport (427x240 GUI pixels) without
+        // clipping, while every larger viewport keeps its natural scale.
+        return Math.max(0.4F, scale);
     }
 
     protected abstract void build();
@@ -119,6 +292,8 @@ public abstract class VeriScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        int uiX = (int) toUiX(mouseX);
+        int uiY = (int) toUiY(mouseY);
         graphics.pose().pushPose();
         try {
             graphics.pose().translate(uiOffsetX, uiOffsetY, 0.0F);
@@ -129,7 +304,98 @@ public abstract class VeriScreen extends Screen {
             // had not opened at all.
             Ui.setScreenTransform(uiOffsetX, uiOffsetY, uiScale);
             this.renderBackground(graphics);
-            super.render(graphics, (int) toUiX(mouseX), (int) toUiY(mouseY), partialTick);
+            
+            if (this.buildFailure != null && this.font != null) {
+                // A silent half-built page is worse than a visible error: show it
+                // so a screenshot alone identifies the failing screen.
+                graphics.drawString(this.font, "VeriBorder UI error: " + this.buildFailure,
+                        left + 4, top + 44, 0xFF5555, false);
+            }
+            // 26.4 diagnosis: when a page renders its text but none of its
+            // controls, this line tells us whether the controls were never
+            // created or were clipped/offset away.
+            
+            // 26.4 scrollable pages: the widget pass is clipped to the content
+            // band; the fixed footer buttons are painted afterwards so a row
+            // scrolled underneath them can never cover them.
+            if (isContentClipped()) {
+                int[] band = screenBand(contentClipTop, contentClipBottom);
+                Ui.scissor(graphics, band[0], band[1], band[0] + band[2], band[1] + band[3]);
+                try {
+                    for (Renderable renderable : renderables) {
+                        if (renderable instanceof AbstractWidget widget && fixedWidgets.contains(widget)) {
+                            continue;
+                        }
+                        renderable.render(graphics, uiX, uiY, partialTick);
+                    }
+                } finally {
+                    graphics.disableScissor();
+                }
+                for (AbstractWidget widget : fixedWidgets) {
+                    if (widget.visible) {
+                        widget.render(graphics, uiX, uiY, partialTick);
+                    }
+                }
+            } else {
+                for (Renderable renderable : renderables) {
+                    renderable.render(graphics, uiX, uiY, partialTick);
+                }
+            }
+            // 26.4 shared dropdowns: closed controls first, then every open panel,
+            // so a dropped list is never covered by a widget that follows it. A
+            // scrolled page clips the closed controls too; the open panel stays
+            // unclipped because it is a floating layer.
+            if (isContentClipped()) {
+                int[] band = screenBand(contentClipTop, contentClipBottom);
+                Ui.scissor(graphics, band[0], band[1], band[0] + band[2], band[1] + band[3]);
+                try {
+                    for (Dropdown dropdown : dropdowns) {
+                        dropdown.draw(graphics, font, accent, uiX, uiY);
+                    }
+                } finally {
+                    graphics.disableScissor();
+                }
+            } else {
+                for (Dropdown dropdown : dropdowns) {
+                    dropdown.draw(graphics, font, accent, uiX, uiY);
+                }
+            }
+            for (Dropdown dropdown : dropdowns) {
+                if (dropdown.isOpen()) {
+                    dropdown.drawOverlay(graphics, font, accent, uiX, uiY);
+                }
+            }
+        } finally {
+            graphics.pose().popPose();
+            Ui.clearScreenTransform();
+        }
+        // Tooltips are painted in raw GUI space (after the pose is restored) so a
+        // downscaled screen does not shrink the tooltip text as well.
+        for (int i = dropdowns.size() - 1; i >= 0; i--) {
+            Dropdown dropdown = dropdowns.get(i);
+            if (!dropdown.isOpen() && dropdown.tooltip() != null
+                    && dropdown.contains(uiX, uiY)) {
+                Ui.tooltip(graphics, mouseX, mouseY, dropdown.tooltip());
+                break;
+            }
+        }
+    }
+
+    /**
+     * Runs {@code action} in design space <em>after</em> every widget has been
+     * painted, so an open dropdown / palette / checklist can never be covered by
+     * the widgets that follow it on the page (26.3 round 12 shared pickers).
+     */
+    protected void overlay(GuiGraphics graphics, java.util.function.Consumer<GuiGraphics> action) {
+        if (action == null) {
+            return;
+        }
+        graphics.pose().pushPose();
+        try {
+            graphics.pose().translate(uiOffsetX, uiOffsetY, 0.0F);
+            graphics.pose().scale(uiScale, uiScale, 1.0F);
+            Ui.setScreenTransform(uiOffsetX, uiOffsetY, uiScale);
+            action.accept(graphics);
         } finally {
             graphics.pose().popPose();
             Ui.clearScreenTransform();
@@ -151,14 +417,14 @@ public abstract class VeriScreen extends Screen {
         Ui.panel(graphics, left, top, imageWidth, imageHeight);
         graphics.fill(left + 1, top + 1, left + imageWidth - 1, top + 2, 0xFF3A5570);
         graphics.fill(left + 1, top + imageHeight - 2, left + imageWidth - 1, top + imageHeight - 1, 0x552FC6B7);
-        for (LabeledField field : labeledFields) {
-            if (field.box().visible) {
-                drawFieldChrome(graphics, field);
+        withContentClip(graphics, () -> {
+            for (LabeledField field : labeledFields) {
+                if (field.box().visible) {
+                    drawFieldChrome(graphics, field);
+                }
             }
-        }
-    }
-
-    private void drawFieldChrome(GuiGraphics graphics, LabeledField field) {
+        });
+    }    private void drawFieldChrome(GuiGraphics graphics, LabeledField field) {
         EditBox box = field.box();
         int x = box.getX();
         int y = box.getY();
@@ -198,7 +464,17 @@ public abstract class VeriScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        return super.mouseClicked(toUiX(mouseX), toUiY(mouseY), button);
+        double uiX = toUiX(mouseX);
+        double uiY = toUiY(mouseY);
+        if (dropdownClick(uiX, uiY)) {
+            return true;
+        }
+        // A click outside the scroll band must never hit a row that has been
+        // scrolled out of view; the fixed footer widgets stay clickable.
+        if (!insideContentBand(uiY) && !overFixedWidget(uiX, uiY)) {
+            return false;
+        }
+        return super.mouseClicked(uiX, uiY, button);
     }
 
     @Override
@@ -218,6 +494,33 @@ public abstract class VeriScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+        if (dropdownScroll(toUiX(mouseX), toUiY(mouseY), delta)) {
+            return true;
+        }
         return super.mouseScrolled(toUiX(mouseX), toUiY(mouseY), delta);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // An open dropdown owns 閳?閳?Enter/Esc (and Backspace for its search field)
+        // before the screen's own shortcuts (Esc would otherwise close the screen).
+        for (int i = dropdowns.size() - 1; i >= 0; i--) {
+            Dropdown dropdown = dropdowns.get(i);
+            if (dropdown.isOpen() && dropdown.keyPressed(keyCode, scanCode, modifiers)) {
+                return true;
+            }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean charTyped(char codePoint, int modifiers) {
+        for (int i = dropdowns.size() - 1; i >= 0; i--) {
+            Dropdown dropdown = dropdowns.get(i);
+            if (dropdown.isOpen() && dropdown.charTyped(codePoint, modifiers)) {
+                return true;
+            }
+        }
+        return super.charTyped(codePoint, modifiers);
     }
 }

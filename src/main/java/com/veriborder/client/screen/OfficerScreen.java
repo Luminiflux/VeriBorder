@@ -245,7 +245,23 @@ public class OfficerScreen extends VeriScreen {
         int line2 = rowY + 14;
         Ui.clipped(graphics, dash(shortDimension(row.gate())), innerX, line2, 150, Ui.DIM);
         Ui.clipped(graphics, kindText(row.kind()), innerX + 154, line2, 60, kindColor(row.kind()));
-        Ui.clipped(graphics, text(row.detail()), innerX + 218, line2, 258, Ui.MUTED);
+        Ui.clipped(graphics, detail(row.detail()), innerX + 218, line2, 258, Ui.MUTED);
+    }
+
+    /**
+     * Officer-side log detail (26.3 round 12): the readable sentence <em>plus</em>
+     * the administrator reason code, so the two-track rejection reason keeps its
+     * machine-readable code on the officer console.
+     */
+    private static Component detail(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Component.literal(UNKNOWN);
+        }
+        String value = raw.trim();
+        if (value.indexOf('.') > 0 && !value.contains(" ") && I18n.exists(value)) {
+            return Component.translatable(value).append(Component.literal(" · " + value));
+        }
+        return Component.literal(value);
     }
 
     private void drawHint(GuiGraphics graphics) {

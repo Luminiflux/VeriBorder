@@ -3,11 +3,13 @@ package com.veriborder.client;
 import com.veriborder.doc.DocumentData;
 import com.veriborder.doc.DocumentKind;
 import com.veriborder.doc.DocumentStatus;
+import com.veriborder.doc.TravellerReasons;
 import com.veriborder.doc.VerificationResult;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.resources.language.I18n;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 
@@ -28,6 +30,8 @@ public final class Ui {
     public static final int AMBER = 0xFFF2B84B;
     public static final int CYAN = 0xFF45D6D0;
     public static final int PURPLE = 0xFFA78BFA;
+    /** Faint top highlight used by the shared {@code CardPanel} chrome. */
+    public static final int BLEND_TOP = 0x40FFFFFF;
 
     // Current VeriScreen pose transform. Minecraft 1.20.1 applies scissor
     // rectangles in raw GUI coordinates (the pose stack is NOT taken into
@@ -138,6 +142,19 @@ public final class Ui {
     }
 
     public static void drawCheck(GuiGraphics graphics, VerificationResult check, int x, int y, int width, int height) {
+        drawCheck(graphics, check, x, y, width, height, false);
+    }
+
+    /**
+     * Verification banner.
+     *
+     * @param travellerFacing when true the reason line is the plain-language
+     *                        traveller text ({@link com.veriborder.doc.TravellerReasons})
+     *                        instead of the administrator reason codes, which stay
+     *                        available in the officer console and the border log
+     */
+    public static void drawCheck(GuiGraphics graphics, VerificationResult check, int x, int y, int width, int height,
+                                 boolean travellerFacing) {
         if (check == null) {
             return;
         }
@@ -149,12 +166,20 @@ public final class Ui {
         graphics.drawString(font(), symbol, x + 8, y + 4, color, false);
         Component status = Component.translatable(check.valid() ? "verify.veriborder.pass" : "verify.veriborder.fail");
         graphics.drawString(font(), status, x + 21, y + 4, color, false);
-        String reasons = reasons(check);
+        String reasons = travellerFacing ? travellerReasons(check) : reasons(check);
         int reasonX = x + 21 + font().width(status) + 8;
         int maxWidth = width - (reasonX - x) - 8;
         if (maxWidth > 20) {
             graphics.drawString(font(), font().plainSubstrByWidth(reasons, maxWidth), reasonX, y + 4, MUTED, false);
         }
+    }
+
+    /** Traveller-facing reason sentence for a check (no administrator codes). */
+    public static String travellerReasons(VerificationResult check) {
+        if (check == null) {
+            return "";
+        }
+        return Component.translatable(TravellerReasons.of(check)).getString();
     }
 
     public static String reasons(VerificationResult check) {
@@ -217,9 +242,12 @@ public final class Ui {
                         doc.isExpired() ? RED : MUTED, false);
                 drawEmblem(graphics, x + width - 28, y + 30, 18, accent);
                 String mrz = doc.mrz2();
-                if (!mrz.isBlank() && height >= 78) {
+                // The MRZ plate gets its own band only on tall cards. On the
+                // compact cards (readers, modifier, issuer preview) it would
+                // collide with the status/footer line, so it is omitted there.
+                if (!mrz.isBlank() && height >= 150) {
                     graphics.pose().pushPose();
-                    graphics.pose().translate(x + 7, y + height - 15, 0);
+                    graphics.pose().translate(x + 7, y + height - 32, 0);
                     graphics.pose().scale(0.45F, 0.45F, 1.0F);
                     graphics.drawString(font(), ellipsis(mrz, (int) ((width - 62) / 0.45F)), 0, 0,
                             0xFFE4D8BC, false);
@@ -284,6 +312,35 @@ public final class Ui {
 
     public static String format(String key, Object... args) {
         return Component.translatable(key, args).getString();
+    }
+
+    /**
+     * New 26.3 UI strings are shared with the language owners: the code ships a
+     * readable English fallback and automatically switches to the translation as
+     * soon as the key exists in {@code lang/*.json}, so no screen blocks on a
+     * lang file edit (and no owner has to overwrite another owner's keys).
+     */
+    public static Component label(String key, String fallback) {
+        if (key == null || key.isBlank()) {
+            return Component.literal(fallback == null ? "" : fallback);
+        }
+        if (I18n.exists(key)) {
+            return Component.translatable(key);
+        }
+        return Component.literal(fallback == null ? key : fallback);
+    }
+
+    /** Same fallback contract as {@link #label(String, String)}, as plain text. */
+    public static String labelText(String key, String fallback) {
+        return label(key, fallback).getString();
+    }
+
+    /** Existing translation when present, otherwise the raw server value. */
+    public static Component translatedOr(String key, String fallback) {
+        if (key != null && !key.isBlank() && I18n.exists(key)) {
+            return Component.translatable(key);
+        }
+        return Component.literal(fallback == null ? "" : fallback);
     }
 
     public static int rowColor(boolean hovered, boolean selected) {

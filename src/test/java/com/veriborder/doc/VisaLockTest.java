@@ -348,4 +348,71 @@ class VisaLockTest {
                 "locked validity replaces the submitted expiry, leap day clamped");
         assertEquals("00112233", visa.getString("code"));
     }
+
+    @Test
+    void lockedIssueDateWithBlankValueForcesTodayAndIgnoresTheForm() {
+        DeviceBlockEntity.Locks locked = locks(tag -> tag.putBoolean("lockIssueDate", true));
+        CompoundTag submitted = new CompoundTag();
+        submitted.putString("name", "ALEX MORGAN");
+        submitted.putString("birthDate", "1991-02-03");
+        submitted.putString("issueDate", "2020-01-01");
+
+        CompoundTag enforced = DeviceService.applyIssueDateLock(locked, submitted);
+        assertEquals(DateUtil.today(), enforced.getString("issueDate"),
+                "a locked blank date means 'issued today', not 'no lock'");
+        assertEquals("2020-01-01", submitted.getString("issueDate"),
+                "the submitted form is never mutated");
+        assertEquals(DateUtil.today(),
+                DocumentFactory.fromForm(DocStyle.CN_PASSPORT, enforced).issueDate());
+
+        // An unusable stored value is treated exactly like a blank one.
+        DeviceBlockEntity.Locks unusable = locks(tag -> {
+            tag.putBoolean("lockIssueDate", true);
+            tag.putString("lockedIssueDate", "not-a-date");
+        });
+        assertEquals(DateUtil.today(),
+                DeviceService.applyIssueDateLock(unusable, submitted).getString("issueDate"));
+    }
+
+    @Test
+    void lockedIssueDateWithAConfiguredValueWinsAndRecomputesExpiry() {
+        DeviceBlockEntity.Locks locked = locks(tag -> {
+            tag.putBoolean("lockIssueDate", true);
+            tag.putString("lockedIssueDate", " 2024-02-29 ");
+        });
+        CompoundTag submitted = new CompoundTag();
+        submitted.putString("name", "ALEX MORGAN");
+        submitted.putString("birthDate", "1991-02-03");
+        submitted.putString("issueDate", "2020-01-01");
+        submitted.putString("expiryDate", "2021-01-01");
+
+        CompoundTag enforced = DeviceService.applyIssueDateLock(locked, submitted);
+        assertEquals("2024-02-29", enforced.getString("issueDate"), "the locked value wins");
+        DocumentData doc = DocumentFactory.fromForm(DocStyle.CN_PASSPORT, enforced);
+        assertEquals("2024-02-29", doc.issueDate());
+        // DeviceService#issueDocument recomputes the locked expiry after the date
+        // was forced, so the validity follows the locked (not the submitted) date.
+        doc.setExpiryDate(DocumentFactory.lockedExpiry(doc.issueDate(), 10));
+        assertEquals("2034-02-28", doc.expiryDate(),
+                "locked validity is recomputed from the forced issue date (leap day clamped)");
+    }
+
+    @Test
+    void unlockedIssueDateKeepsTheSubmittedDate() {
+        CompoundTag submitted = new CompoundTag();
+        submitted.putString("name", "ALEX MORGAN");
+        submitted.putString("birthDate", "1991-02-03");
+        submitted.putString("issueDate", "2020-01-01");
+
+        CompoundTag passed = DeviceService.applyIssueDateLock(DeviceBlockEntity.Locks.NONE, submitted);
+        assertEquals("2020-01-01", passed.getString("issueDate"));
+        assertEquals("2020-01-01",
+                DocumentFactory.fromForm(DocStyle.CN_PASSPORT, passed).issueDate());
+
+        // A stored date without the lock enabled has no effect.
+        DeviceBlockEntity.Locks storedButUnlocked = locks(tag ->
+                tag.putString("lockedIssueDate", "2024-02-29"));
+        assertEquals("2020-01-01",
+                DeviceService.applyIssueDateLock(storedButUnlocked, submitted).getString("issueDate"));
+    }
 }

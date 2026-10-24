@@ -177,27 +177,27 @@ function loadTexture(ref) {
 const FACE_DEF = {
   north: {
     verts: b => [[b.x2, b.y2, b.z1], [b.x1, b.y2, b.z1], [b.x1, b.y1, b.z1], [b.x2, b.y1, b.z1]],
-    uv: b => [b.x1, b.x2, 16 - b.y2, 16 - b.y1]
+    uv: b => [b.x1, 16 - b.y2, b.x2, 16 - b.y1]
   },
   south: {
     verts: b => [[b.x1, b.y2, b.z2], [b.x2, b.y2, b.z2], [b.x2, b.y1, b.z2], [b.x1, b.y1, b.z2]],
-    uv: b => [16 - b.x2, 16 - b.x1, 16 - b.y2, 16 - b.y1]
+    uv: b => [16 - b.x2, 16 - b.y2, 16 - b.x1, 16 - b.y1]
   },
   east: {
     verts: b => [[b.x2, b.y2, b.z2], [b.x2, b.y2, b.z1], [b.x2, b.y1, b.z1], [b.x2, b.y1, b.z2]],
-    uv: b => [16 - b.z2, 16 - b.z1, 16 - b.y2, 16 - b.y1]
+    uv: b => [16 - b.z2, 16 - b.y2, 16 - b.z1, 16 - b.y1]
   },
   west: {
     verts: b => [[b.x1, b.y2, b.z1], [b.x1, b.y2, b.z2], [b.x1, b.y1, b.z2], [b.x1, b.y1, b.z1]],
-    uv: b => [b.z1, b.z2, 16 - b.y2, 16 - b.y1]
+    uv: b => [b.z1, 16 - b.y2, b.z2, 16 - b.y1]
   },
   up: {
     verts: b => [[b.x1, b.y2, b.z1], [b.x2, b.y2, b.z1], [b.x2, b.y2, b.z2], [b.x1, b.y2, b.z2]],
-    uv: b => [b.x1, b.x2, b.z1, b.z2]
+    uv: b => [b.x1, b.z1, b.x2, b.z2]
   },
   down: {
     verts: b => [[b.x1, b.y1, b.z2], [b.x2, b.y1, b.z2], [b.x2, b.y1, b.z1], [b.x1, b.y1, b.z1]],
-    uv: b => [b.x1, b.x2, 16 - b.z2, 16 - b.z1]
+    uv: b => [b.x1, 16 - b.z2, b.x2, 16 - b.z1]
   }
 };
 
@@ -226,16 +226,20 @@ function buildQuads(model) {
       if (!tex) { missing.push(tref); continue; }
       used.add(tref);
       const def = FACE_DEF[fname];
+      // Minecraft model UVs are [u1, v1, u2, v2] with v1 at the top edge.
+      // An earlier revision read them as [u1, u2, v1, v2], which collapsed
+      // every square UV to a single texel; normalise once here instead.
       const uvs = face.uv || def.uv(b);
+      const u1 = uvs[0] / 16 * tex.w, v1 = uvs[1] / 16 * tex.h;
+      const u2 = uvs[2] / 16 * tex.w, v2 = uvs[3] / 16 * tex.h;
       const verts = def.verts(b).map(v => rotatePoint(v, rot));
+      // Every face's vertex 0 is its top-left corner as seen from outside, so
+      // u1 belongs there. north/south used to swap u1/u2 to compensate for the
+      // old mirrored camera basis; with that fixed the swap only re-mirrors the
+      // face (a real-client test shows unmirrored labels read correctly).
       quads.push({
         verts,
-        uv: [
-          [uvs[0] / 16 * tex.w, uvs[2] / 16 * tex.h],
-          [uvs[1] / 16 * tex.w, uvs[2] / 16 * tex.h],
-          [uvs[1] / 16 * tex.w, uvs[3] / 16 * tex.h],
-          [uvs[0] / 16 * tex.w, uvs[3] / 16 * tex.h]
-        ],
+        uv: [[u1, v1], [u2, v1], [u2, v2], [u1, v2]],
         tex,
         rot
       });
@@ -245,7 +249,7 @@ function buildQuads(model) {
 }
 
 // ---------------------------------------------------------------- render
-function renderModel(model, file) {
+function renderModel(model, file, view) {
   const { quads, missing, used } = buildQuads(model);
   const S = SIZE * SS;
   const rgba = Buffer.alloc(S * S * 4);
@@ -271,10 +275,19 @@ function renderModel(model, file) {
   }
   const center = [(bb.min[0] + bb.max[0]) / 2, (bb.min[1] + bb.max[1]) / 2, (bb.min[2] + bb.max[2]) / 2];
 
-  const az = 135 * Math.PI / 180, el = 28 * Math.PI / 180;
+  // Gates are read almost head-on: a near-front angle keeps both pillars the
+  // same apparent size (an isometric 135 view makes the near pillar look like a
+  // separate cabinet) while still showing the cap depth and the side faces.
+  // Explicit {az, el} lets the front/leaf QA renders use their own camera.
+  const gateView = !!view || /(^|[\\/])(egate|exit_gate|dual_gate)\.png$/.test(file);
+  const az = ((view && view.az !== undefined) ? view.az : (gateView ? 188 : 135)) * Math.PI / 180;
+  const el = ((view && view.el !== undefined) ? view.el : (gateView ? 21 : 28)) * Math.PI / 180;
   const camDir = [Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az)];
   const forward = vnorm([-camDir[0], -camDir[1], -camDir[2]]);
-  const right = vnorm(vcross([0, 1, 0], forward));
+  // Screen basis: right = forward x worldUp (NOT worldUp x forward), up = right x forward.
+  // The previous order flipped both axes, which rendered every preview rotated 180°
+  // (models appeared upside down and any north-face lettering read inverted).
+  const right = vnorm(vcross(forward, [0, 1, 0]));
   const up = vcross(right, forward);
 
   const proj = p => {
@@ -292,28 +305,36 @@ function renderModel(model, file) {
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   const toScreen = (p, s) => [S / 2 + (p[0] - cx) * s, S / 2 + (p[1] - cy) * s];
 
-  // painter's algorithm: far to near
+  // painter's algorithm: far to near (centroid depth)
   const items = quads.map(q => {
     const ps = q.verts.map(proj);
     const depth = ps.reduce((a, p) => a + p[2], 0) / ps.length;
     return { q, ps, depth };
   }).sort((a, b) => b.depth - a.depth);
 
-  const light = vnorm([-0.42, 0.86, 0.28]);
+  // Gate previews use a front-biased light so the matte white shell reads as
+  // white instead of mid-grey; all other devices keep the original studio light.
+  const light = gateView ? vnorm([-0.22, 0.72, -0.66]) : vnorm([-0.42, 0.86, 0.28]);
   let covered = 0;
   const mask = new Uint8Array(S * S);
+  // Per-pixel depth buffer. Painter's-algorithm sorting by centroid alone let a
+  // tall body's front quad paint over a small element that protrudes in front of
+  // it (labels/low slots vanished from previews while being correct in game).
+  const depthBuf = new Float32Array(S * S).fill(Infinity);
 
   for (const it of items) {
     const { q, ps } = it;
     const scr = ps.map(p => toScreen(p, scale));
     const n = vnorm(vcross(vsub(q.verts[1], q.verts[0]), vsub(q.verts[3], q.verts[0])));
-    let shade = 0.66 + 0.34 * Math.max(0, vdot(n, light));
-    if (n[1] < -0.2) shade *= 0.72;
-    shade = Math.max(0.42, Math.min(1.08, shade));
+    const dot = Math.max(0, vdot(n, light));
+    let shade = gateView ? (0.96 + 0.08 * dot) : (0.66 + 0.34 * dot);
+    if (n[1] < -0.2) shade *= gateView ? 0.82 : 0.72;
+    shade = gateView ? Math.max(0.7, Math.min(1.05, shade)) : Math.max(0.42, Math.min(1.08, shade));
     for (const tri of [[0, 1, 2], [0, 2, 3]]) {
       const a = scr[tri[0]], b2 = scr[tri[1]], c = scr[tri[2]];
       const ua = q.uv[tri[0]], ub = q.uv[tri[1]], uc = q.uv[tri[2]];
-      rasterTri(rgba, mask, S, a, b2, c, ua, ub, uc, q.tex, shade);
+      rasterTri(rgba, mask, S, a, b2, c, ua, ub, uc, q.tex, shade,
+        depthBuf, ps[tri[0]][2], ps[tri[1]][2], ps[tri[2]][2]);
     }
   }
   for (let i = 0; i < S * S; i++) if (mask[i]) covered++;
@@ -344,7 +365,7 @@ function renderModel(model, file) {
   return { missing, used, bb, dims, silhouette, quads };
 }
 
-function rasterTri(buf, mask, W, p0, p1, p2, uv0, uv1, uv2, tex, shade) {
+function rasterTri(buf, mask, W, p0, p1, p2, uv0, uv1, uv2, tex, shade, depthBuf, d0, d1, d2) {
   const minX = Math.max(0, Math.floor(Math.min(p0[0], p1[0], p2[0])));
   const maxX = Math.min(W - 1, Math.ceil(Math.max(p0[0], p1[0], p2[0])));
   const minY = Math.max(0, Math.floor(Math.min(p0[1], p1[1], p2[1])));
@@ -362,6 +383,10 @@ function rasterTri(buf, mask, W, p0, p1, p2, uv0, uv1, uv2, tex, shade) {
       let w1 = ((p2[0] - px) * (p0[1] - py) - (p2[1] - py) * (p0[0] - px)) * inv;
       let w2 = 1 - w0 - w1;
       if (w0 < -1e-5 || w1 < -1e-5 || w2 < -1e-5) continue;
+      const z = w0 * d0 + w1 * d1 + w2 * d2;
+      const zi = y * W + x;
+      if (depthBuf && z > depthBuf[zi] + 1e-4) continue;
+      if (depthBuf) depthBuf[zi] = z;
       const u = w0 * uv0[0] + w1 * uv1[0] + w2 * uv2[0];
       const v = w0 * uv0[1] + w1 * uv1[1] + w2 * uv2[1];
       let tx = Math.floor(u), ty = Math.floor(v);
@@ -412,7 +437,7 @@ function paletteOf(used) {
 }
 
 // ---------------------------------------------------------------- main
-const files = fs.readdirSync(MODEL_DIR).filter(f => f.endsWith('.json')).sort();
+const files = fs.readdirSync(MODEL_DIR).filter(f => f.endsWith('.json') && f !== 'device_extension.json').sort();
 const rows = [];
 const failures = [];
 const shapeHashes = new Map();
@@ -430,23 +455,36 @@ for (const file of files) {
   const size = fs.statSync(full).size;
   const els = model.elements || [];
   const sig = geometrySignature(model);
-  if (shapeHashes.has(sig)) failures.push(`${id}: identical geometry to ${shapeHashes.get(sig)}`);
-  else shapeHashes.set(sig, id);
+  // The dual-clearance gate is contractually the egate geometry with a dark
+  // green accent, so that one identical pair is allowed; any other duplicate is
+  // still a failure.
+  const sharedWithEgate = (id === 'dual_gate' && shapeHashes.get(sig) === 'egate')
+    || (id === 'egate' && shapeHashes.get(sig) === 'dual_gate');
+  if (shapeHashes.has(sig) && !sharedWithEgate) failures.push(`${id}: identical geometry to ${shapeHashes.get(sig)}`);
+  else if (!shapeHashes.has(sig)) shapeHashes.set(sig, id);
 
-  const isGate = id === 'egate' || id === 'exit_gate';
+  const isGate = id === 'egate' || id === 'exit_gate' || id === 'dual_gate'
+    || id === 'egate_open' || id === 'exit_gate_open';
   const isFullCube = els.length === 1 &&
     els[0].from.join(',') === '0,0,0' && els[0].to.join(',') === '16,16,16';
   if (isFullCube) failures.push(`${id}: model is a single full 16^3 cube`);
   const minEls = isGate ? 20 : 10;
   if (els.length < minEls) failures.push(`${id}: only ${els.length} elements (need >= ${minEls})`);
   if (size > 120 * 1024) failures.push(`${id}: model is ${(size / 1024).toFixed(1)} KB (limit 120 KB)`);
-  if (!els.some(el => el.rotation)) failures.push(`${id}: no rotated element`);
+  // Rotated elements are optional in 26.2: Blender-authored cuboid models may be
+  // axis-aligned as long as they are detailed and recognisable (>=10 elements,
+  // >=4 light colours).
 
-  // The E-Gates are single-lane barriers: 20 px wide (two 4 px
-  // cabinets straddling the controller edges), ~16 px tall, 12 px passage.
+  // 26.2 gates are a single-block footprint (16 px) so adjacent gates tile
+  // seamlessly in any direction, and 24 px tall (1.5 blocks) so the player
+  // cannot jump over. The door is animated in EGateRenderer, so the static
+  // model must keep the 10 px passage (x 3..13) clear.
+  // Round 9 allows standing consoles / full kiosks to be two blocks tall
+  // (up to 32 px, see ROUND9_SPEC section 2), so the non-gate vertical bound is
+  // 32.5 rather than the old 24.5. Gates keep their own 24 px envelope below.
   const span = isGate
-    ? { x: [-2.8, 18.8], y: [-0.5, 18.5], z: [-0.5, 16.5] }
-    : { x: [-0.5, 16.5], y: [-0.5, 24.5], z: [-0.5, 16.5] };
+    ? { x: [-3.2, 19.2], y: [-0.5, 20.0], z: [-0.5, 17.0] }
+    : { x: [-0.5, 16.5], y: [-0.5, 32.5], z: [-0.5, 16.5] };
 
   for (const [i, el] of els.entries()) {
     const axes = ['x', 'y', 'z'];
@@ -466,20 +504,21 @@ for (const file of files) {
   }
 
   if (isGate) {
-    // 20 px wide, ~16 px tall envelope and a genuinely empty 12 px central
-    // passage (x 2.2..13.8) for the renderer's animated wings.
+    // Single-block footprint, 1.5-block tall, with a genuinely empty 10 px
+    // central passage (x 3..13) for the renderer's animated door leaves.
     const gx1 = Math.min(...els.map(e => e.from[0]));
     const gx2 = Math.max(...els.map(e => e.to[0]));
     const gy1 = Math.min(...els.map(e => e.from[1]));
     const gy2 = Math.max(...els.map(e => e.to[1]));
-    if (gx2 - gx1 < 18) failures.push(`${id}: gate is ${(gx2 - gx1).toFixed(1)} px wide (need >= 18)`);
-    if (gy2 - gy1 < 15) failures.push(`${id}: gate is ${(gy2 - gy1).toFixed(1)} px tall (need >= 15)`);
-    const clear = { x1: 2.3, y1: 0.4, z1: 0.4, x2: 13.7, y2: 15.0, z2: 15.0 };
+    if (gx2 - gx1 < 15) failures.push(`${id}: gate is ${(gx2 - gx1).toFixed(1)} px wide (need >= 15, single block)`);
+    if (gy2 - gy1 < 16) failures.push(`${id}: gate is ${(gy2 - gy1).toFixed(1)} px tall (need >= 16)`);
+    if (gx2 - gx1 > 22) failures.push(`${id}: gate is ${(gx2 - gx1).toFixed(1)} px wide (shell too wide)`);
+    const clear = { x1: 2.9, y1: 0.9, z1: 0.3, x2: 13.1, y2: 23.0, z2: 15.7 };
     for (const [i, el] of els.entries()) {
       if (el.from[0] < clear.x2 && el.to[0] > clear.x1 &&
           el.from[1] < clear.y2 && el.to[1] > clear.y1 &&
           el.from[2] < clear.z2 && el.to[2] > clear.z1) {
-        failures.push(`${id}: element ${i} intrudes into the 12 px door passage`);
+        failures.push(`${id}: element ${i} intrudes into the 10 px door passage`);
       }
     }
   }
@@ -535,7 +574,7 @@ for (const file of fs.readdirSync(BS_DIR).filter(f => f.endsWith('.json'))) {
       }
     }
   }
-  if (id === 'egate' || id === 'exit_gate') {
+  if (id === 'egate' || id === 'exit_gate' || id === 'dual_gate') {
     for (const f of ['north', 'east', 'south', 'west']) {
       for (const o of ['false', 'true']) {
         if (!variants[`facing=${f},open=${o}`]) failures.push(`blockstate ${id}: missing variant facing=${f},open=${o}`);
@@ -562,7 +601,7 @@ for (const file of fs.readdirSync(ITEM_DIR).filter(f => f.endsWith('.json'))) {
 
 // ---- round-2 required ids and files
 const LOOT_DIR = path.join(ROOT, 'src', 'main', 'resources', 'data', 'veriborder', 'loot_tables', 'blocks');
-for (const id of ['exit_gate', 'self_endorsement']) {
+for (const id of ['exit_gate', 'self_endorsement', 'dual_gate']) {
   if (!rows.some(r => r.id === id)) failures.push(`missing required model ${id}`);
   if (!fs.existsSync(path.join(BS_DIR, id + '.json'))) failures.push(`missing required blockstate ${id}`);
   if (!fs.existsSync(path.join(ITEM_DIR, id + '.json'))) failures.push(`missing required item model ${id}`);
@@ -570,7 +609,7 @@ for (const id of ['exit_gate', 'self_endorsement']) {
 }
 if (!fs.existsSync(path.join(ITEM_DIR, 'device_brush.json'))) failures.push('missing required item model device_brush');
 if (!fs.existsSync(path.join(ASSETS, 'textures', 'item', 'device_brush.png'))) failures.push('missing required texture device_brush');
-if (rows.length !== 21) failures.push(`expected 21 block models (18 + exit_gate + self_endorsement + self_visa), found ${rows.length}`);
+  if (rows.length !== 22) failures.push(`expected 22 block models (22 devices), found ${rows.length}`);
 
 // ---- report
 const lines = [];
@@ -598,25 +637,28 @@ lines.push('');
 lines.push(`models: ${rows.length}   blockstates: ${bsCount}   variants: ${variantCount}   textures on disk: ${fs.readdirSync(TEX_DIR).filter(f => f.endsWith('.png')).length}`);
 lines.push(`min elements: ${Math.min(...rows.map(r => r.elements))}   unique geometry hashes: ${new Set(rows.map(r => r.hash)).size}`);
 lines.push(`distinct light colors: min ${Math.min(...rows.map(r => r.light))}   max ${Math.max(...rows.map(r => r.light))}`);
-const gateRows = rows.filter(r => r.id === 'egate' || r.id === 'exit_gate');
-lines.push(`gates: ${gateRows.map(g => `${g.id} ${g.bbox} (${g.elements} els, ${g.rotated} rotated)`).join('   ')}   passage: 12 px clear`);
+const gateRows = rows.filter(r => r.id.startsWith('egate') || r.id.startsWith('exit_gate')
+  || r.id.startsWith('dual_gate'));
+lines.push(`gates: ${gateRows.map(g => `${g.id} ${g.bbox} (${g.elements} els, ${g.rotated} rotated)`).join('   ')}   passage: 10 px clear, single-block footprint`);
+lines.push('gate doors: animated in EGateRenderer (two 5 x 12 x 2 px framed glass leaves slide into the pillars on open)');
+
 lines.push('');
 lines.push('CHECKLIST');
 const checks = [
   ['every model >= 10 elements (gates >= 20)', !failures.some(f => f.includes('elements (need'))],
-  ['every model has a rotated element', !failures.some(f => f.includes('no rotated element'))],
+  ['rotated elements optional (Blender cuboids may be axis-aligned)', !failures.some(f => f.includes('no rotated element'))],
   ['no single full cube', !failures.some(f => f.includes('single full 16^3 cube'))],
-  ['unique geometry per device', !failures.some(f => f.includes('identical geometry'))],
+  ['unique geometry per device (dual_gate may mirror egate)', !failures.some(f => f.includes('identical geometry'))],
   ['>= 4 light palette colors', !failures.some(f => f.includes('light palette colors'))],
   ['all texture refs resolve', !failures.some(f => f.includes('missing texture') || f.includes('declared texture'))],
   ['textures are 32 or 64 px', !failures.some(f => f.includes('need 32 or 64'))],
   ['model files < 120 KB', !failures.some(f => f.includes('limit 120'))],
   ['blockstates reference existing models', !failures.some(f => f.includes('variant') && f.includes('missing model'))],
   ['item model parents resolve', !failures.some(f => f.includes('missing parent'))],
-  ['both gates are >= 18 x 15 px', !failures.some(f => f.includes('px wide (need') || f.includes('px tall (need'))],
-  ['12 px gate passage is clear', !failures.some(f => f.includes('door passage'))],
-  ['21 models + blockstates + item models + loot', !failures.some(f => f.includes('expected 21') || f.includes('missing required'))],
-  ['egate + exit_gate have 8 facing/open variants', !failures.some(f => f.includes('blockstate egate') || f.includes('blockstate exit_gate'))]
+  ['all gates keep the lane and are >= 16 px tall', !failures.some(f => f.includes('px wide (need') || f.includes('px tall (need') || f.includes('shell too wide'))],
+  ['10 px gate passage is clear', !failures.some(f => f.includes('door passage'))],
+  ['22 models + blockstates + item models + loot', !failures.some(f => f.includes('expected 22') || f.includes('missing required'))],
+  ['egate + exit_gate + dual_gate have 8 facing/open variants', !failures.some(f => f.includes('blockstate egate') || f.includes('blockstate exit_gate') || f.includes('blockstate dual_gate'))]
 ];
 for (const [name, ok] of checks) lines.push(`  [${ok ? 'PASS' : 'FAIL'}] ${name}`);
 lines.push('');

@@ -24,14 +24,15 @@ import java.util.UUID;
  * Operator commands for the border state machine (all OP level 2):
  *
  * <pre>
- * /veriborder border status &lt;player&gt;
- * /veriborder border clear &lt;player&gt;
+ * /veriborder border status &lt;person&gt;
+ * /veriborder border clear &lt;person&gt;
  * /veriborder border log [count]
  * </pre>
  *
- * <p>{@code <player>} accepts an online/offline name from the active session
- * list or a UUID, so a traveller who logged out can still be inspected and
- * cleared. Registered through {@link RegisterCommandsEvent}.</p>
+ * <p>{@code <person>} accepts an online/offline player name, a player UUID, the
+ * person key or the document number of the active entry, so an entry can be
+ * inspected and cleared without knowing which booklet was presented. Registered
+ * through {@link RegisterCommandsEvent}.</p>
  */
 @Mod.EventBusSubscriber(modid = VeriBorder.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class BorderCommands {
@@ -50,10 +51,10 @@ public final class BorderCommands {
                         // Brigadier merging another mod's "/veriborder" root.
                         .requires(source -> source.hasPermission(2))
                         .then(Commands.literal("status")
-                                .then(Commands.argument("player", StringArgumentType.word())
+                                .then(Commands.argument("person", StringArgumentType.word())
                                         .executes(BorderCommands::status)))
                         .then(Commands.literal("clear")
-                                .then(Commands.argument("player", StringArgumentType.word())
+                                .then(Commands.argument("person", StringArgumentType.word())
                                         .executes(BorderCommands::clear)))
                         .then(Commands.literal("log")
                                 .executes(context -> log(context, 20))
@@ -65,25 +66,26 @@ public final class BorderCommands {
 
     private static int status(CommandContext<CommandSourceStack> context) {
         CommandSourceStack source = context.getSource();
-        String query = StringArgumentType.getString(context, "player");
-        BorderSession session = find(source.getServer(), query);
-        if (session == null) {
-            source.sendSystemMessage(Component.literal("No active border session for \"" + query + "\"."));
+        String query = StringArgumentType.getString(context, "person");
+        BorderEntry entry = find(source.getServer(), query);
+        if (entry == null) {
+            source.sendSystemMessage(Component.literal("No active border entry for \"" + query + "\"."));
             return 0;
         }
         long now = System.currentTimeMillis();
-        boolean overstay = session.overstayed(now);
-        source.sendSystemMessage(Component.literal("Border session of " + session.playerName()
-                + " (" + session.player() + ")"));
-        source.sendSystemMessage(Component.literal("  document: " + blank(session.documentNumber())
-                + "  kind: " + session.kind()
-                + (session.code().isBlank() ? "" : "  code: " + session.code())));
-        source.sendSystemMessage(Component.literal("  entered: " + formatTime(session.entryEpochMillis())
-                + "  at: " + BorderService.gate(session.gatePos(), session.dimension())
-                + (session.port().isBlank() ? "" : "  port: " + session.port())));
-        source.sendSystemMessage(Component.literal("  allowance: " + session.overstayDays() + " day(s)"
+        boolean overstay = entry.overstayed(now);
+        source.sendSystemMessage(Component.literal("Border entry of " + entry.holder()
+                + (entry.playerName().isBlank() ? "" : " (" + entry.playerName() + ")")
+                + "  key: " + entry.personKey()));
+        source.sendSystemMessage(Component.literal("  document: " + blank(entry.documentNumber())
+                + "  kind: " + entry.kind()
+                + (entry.code().isBlank() ? "" : "  code: " + entry.code())));
+        source.sendSystemMessage(Component.literal("  entered: " + formatTime(entry.entryEpochMillis())
+                + "  at: " + BorderService.gate(entry.gatePos(), entry.dimension())
+                + (entry.port().isBlank() ? "" : "  port: " + entry.port())));
+        source.sendSystemMessage(Component.literal("  allowance: " + entry.overstayDays() + " day(s)"
                 + (overstay
-                        ? "  OVERSTAY by " + session.daysOverstayed(now) + " day(s)"
+                        ? "  OVERSTAY by " + entry.daysOverstayed(now) + " day(s)"
                         : "  on time")));
         return 1;
     }
@@ -91,15 +93,14 @@ public final class BorderCommands {
     private static int clear(CommandContext<CommandSourceStack> context) {
         CommandSourceStack source = context.getSource();
         MinecraftServer server = source.getServer();
-        String query = StringArgumentType.getString(context, "player");
-        BorderSession session = find(server, query);
-        if (session == null || server == null) {
-            source.sendSystemMessage(Component.literal("No active border session for \"" + query + "\"."));
+        String query = StringArgumentType.getString(context, "person");
+        BorderEntry entry = find(server, query);
+        if (entry == null || server == null) {
+            source.sendSystemMessage(Component.literal("No active border entry for \"" + query + "\"."));
             return 0;
         }
-        BorderService.clearSession(server, session.player(), source.getTextName());
-        source.sendSystemMessage(Component.literal("Cleared the border session of "
-                + session.playerName() + "."));
+        BorderService.clearEntry(server, entry.personKey(), source.getTextName());
+        source.sendSystemMessage(Component.literal("Cleared the border entry of " + entry.holder() + "."));
         return 1;
     }
 
@@ -118,24 +119,33 @@ public final class BorderCommands {
         return entries.size();
     }
 
-    /** Resolves a session by exact player name first, then by UUID. */
+    /**
+     * Resolves an active entry by player name, player UUID, document number or
+     * person key (in that order). Entries are listed newest first, so a name that
+     * occurs more than once resolves to the most recent entry.
+     */
     @Nullable
-    private static BorderSession find(@Nullable MinecraftServer server, @Nullable String query) {
+    private static BorderEntry find(@Nullable MinecraftServer server, @Nullable String query) {
         if (server == null || query == null || query.isBlank()) {
             return null;
         }
         String trimmed = query.trim();
         BorderTravelData data = BorderTravelData.get(server);
-        for (BorderSession session : data.sessions()) {
-            if (session.playerName().equalsIgnoreCase(trimmed)) {
-                return session;
+        for (BorderEntry entry : data.entries()) {
+            if (entry.playerName().equalsIgnoreCase(trimmed)) {
+                return entry;
             }
         }
         try {
-            return data.session(UUID.fromString(trimmed));
-        } catch (IllegalArgumentException exception) {
-            return null;
+            BorderEntry byPlayer = data.entryForPlayer(UUID.fromString(trimmed));
+            if (byPlayer != null) {
+                return byPlayer;
+            }
+        } catch (IllegalArgumentException ignored) {
+            // Not a UUID: fall through to the document/person lookups.
         }
+        BorderEntry byDocument = data.entryByDocument(trimmed);
+        return byDocument != null ? byDocument : data.entry(trimmed);
     }
 
     private static String format(BorderLog entry) {

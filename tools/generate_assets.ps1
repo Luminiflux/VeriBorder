@@ -1,18 +1,33 @@
+[CmdletBinding()]
+param(
+    # Optional output root: a directory containing src\main\resources. The
+    # default is the project this script lives in. tools/check_generators.ps1
+    # regenerates into a scratch tree through this parameter, so the
+    # "rerun produces no diff" gate never touches the working copy.
+    [string]$Root,
+    # Skip the document card textures; they belong to generate_item_textures.ps1
+    # (which also runs the ink audit). tools/generate.ps1 uses this to keep the
+    # "devices" and "items" generators independent.
+    [switch]$NoDocuments
+)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
 # ---------------------------------------------------------------------------
-# VeriBorder asset generator
+# VeriBorder asset generator (idempotent: same input -> same bytes)
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\generate_assets.ps1
-# Regenerates: 20 device texture sets (12 PNGs each, +1 gate sign for the two
-# gates), 20 bespoke block models, 20 blockstates, 20 item models, 20 loot
-# tables, entry + exit E-Gate entity textures, the device brush icon, document
-# card textures, modifier icon and the mod logo.
+#   powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\generate_assets.ps1 -Root D:\scratch
+# Regenerates: 20 device texture sets (12 PNGs each; the two gates add sign,
+# cyan, arrow and tablet -> 16), 20 bespoke block models, 20 blockstates, 20
+# item models, 20 loot tables, entry + exit E-Gate entity textures, the device
+# brush icon, document card textures, modifier icon and the mod logo.
 # Recipes are separate: tools/generate_recipes.ps1
+# Everything at once:  tools/generate.ps1  (dispatcher; -Only devices|items|recipes)
+# Drift gate:          powershell -File .\tools\check_generators.ps1
 # Preview/validation:  powershell -File .\tools\preview_models.ps1
 # ---------------------------------------------------------------------------
 
-$root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$root = if ($Root) { (Resolve-Path -LiteralPath $Root).Path } else { Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path) }
 $assets = Join-Path $root 'src\main\resources\assets\veriborder'
 $data = Join-Path $root 'src\main\resources\data\veriborder'
 $blockTex = Join-Path $assets 'textures\block'
@@ -110,6 +125,19 @@ function Draw-Text($g, [string]$text, [System.Drawing.Font]$font, [System.Drawin
     $g.DrawString($text, $font, $b, $x, $y)
     $b.Dispose()
 }
+# Largest whole-pixel Arial bold size in [$minSize, $maxSize] whose advance width
+# still fits $maxWidth. Card headings use it so they can never outgrow the card
+# face: the old fixed Font 7 headings measured 52 px ("IDENTITY CARD") and 69 px
+# ("EXIT-ENTRY PERMIT") in a 56 px card, i.e. 12-29 px past the 64 px canvas.
+function Get-FitFontSize($g, [string]$text, [double]$maxSize, [double]$minSize, [int]$maxWidth) {
+    for ($size = [int]$maxSize; $size -gt [int]$minSize; $size--) {
+        $font = Font $size
+        $measure = $g.MeasureString($text, $font, [System.Drawing.PointF]::new(0, 0), [System.Drawing.StringFormat]::GenericTypographic)
+        $font.Dispose()
+        if ($measure.Width -le $maxWidth) { return $size }
+    }
+    return [int]$minSize
+}
 function UVFit([double]$w, [double]$h) {
     $m = [Math]::Max($w, $h)
     $u = [Math]::Round($w * 16.0 / $m, 1)
@@ -134,7 +162,7 @@ $devices = @(
     @{ id = 'manual_terminal'; base = '#E9EDF0'; base2 = '#D3DBE1'; trim = '#414D57'; accent = '#2FC6B7'; fg = '#9BE9FF'; bg = '#071C22'; variant = 3; style = 'manual'; s1 = @(9.8, 6.4); s2 = @(3, 1.875) },
     @{ id = 'airport_checkin'; base = '#E6EFF8'; base2 = '#CFE1F2'; trim = '#3B5366'; accent = '#3E8FC4'; fg = '#9FD4FF'; bg = '#081A2A'; variant = 0; style = 'airport'; s1 = @(8.2, 4.4); s2 = @(3, 1.875) },
     @{ id = 'station_verifier'; base = '#EAF0F1'; base2 = '#D4E2E4'; trim = '#3F5255'; accent = '#1FA89C'; fg = '#9BFFF2'; bg = '#061E20'; variant = 1; style = 'station'; s1 = @(6.8, 2.4); s2 = @(2.4, 1.5) },
-    @{ id = 'egate'; base = '#F7F8F6'; base2 = '#E7E9E4'; trim = '#3B4650'; accent = '#E08A2E'; fg = '#FFE0B0'; bg = '#241505'; variant = 2; style = 'egate'; s1 = @(3.6, 2.25); s2 = @(2.6, 1.6); gate = $true; sign = 'ENTRY' },
+    @{ id = 'egate'; base = '#F2F4F3'; base2 = '#E2E6E4'; trim = '#1F242B'; accent = '#22B8D6'; fg = '#A9F6FF'; bg = '#041A20'; variant = 2; style = 'egate'; s1 = @(3.6, 5.2); s2 = @(2.4, 3.2); gate = $true; sign = 'ENTRY' },
     @{ id = 'entry_stamp'; base = '#F3EBDD'; base2 = '#E7D6BC'; trim = '#5B4C3A'; accent = '#D98A2B'; fg = '#FFD9A0'; bg = '#1C1206'; variant = 3; style = 'entry'; s1 = @(4, 2.5); s2 = @(2.6, 1.625) },
     @{ id = 'exit_stamp'; base = '#E7ECF2'; base2 = '#CDD8E4'; trim = '#3E4A57'; accent = '#3D6FA8'; fg = '#A9D4FF'; bg = '#08131F'; variant = 0; style = 'exit'; s1 = @(3.6, 2.4); s2 = @(2.6, 1.625) },
     @{ id = 'stamp_history'; base = '#EFE8DA'; base2 = '#DFD2BA'; trim = '#574C3C'; accent = '#C08A36'; fg = '#FFE3A8'; bg = '#1A1408'; variant = 1; style = 'history'; s1 = @(9.2, 4.6); s2 = @(3, 1.875) },
@@ -142,8 +170,8 @@ $devices = @(
     @{ id = 'renewal_machine'; base = '#F6EFE3'; base2 = '#E8DAC4'; trim = '#5A4E3E'; accent = '#C98A3E'; fg = '#FFD9A0'; bg = '#1B1408'; variant = 3; style = 'renewal'; s1 = @(3.9, 5.2); s2 = @(3, 1.875) },
     @{ id = 'print_preview'; base = '#EDEDEA'; base2 = '#DADAD4'; trim = '#4A4A45'; accent = '#D9534F'; fg = '#FFB4AE'; bg = '#141414'; variant = 0; style = 'print'; s1 = @(7, 4); s2 = @(3, 1.875) },
     @{ id = 'blacklist_terminal'; base = '#E4E7EA'; base2 = '#CCD2D8'; trim = '#3A4149'; accent = '#C9393F'; fg = '#FF9E9E'; bg = '#1A0608'; variant = 1; style = 'blacklist'; s1 = @(8.8, 5.6); s2 = @(3, 1.875) },
-    # --- round 2: exit-side gate (same 32x24 envelope, amber/red EXIT theme) ---
-    @{ id = 'exit_gate'; base = '#F5F8F4'; base2 = '#E1E8DF'; trim = '#3F4B45'; accent = '#3FA36B'; fg = '#C8FFE0'; bg = '#0A2418'; variant = 1; style = 'egateExit'; s1 = @(3.6, 2.25); s2 = @(2.6, 1.6); gate = $true; sign = 'EXIT' },
+    # --- round 2: exit-side gate (same split-pillar envelope, EXIT theme) ---
+    @{ id = 'exit_gate'; base = '#F4F6F5'; base2 = '#E4E8E6'; trim = '#191D23'; accent = '#22C3D8'; fg = '#A9F6FF'; bg = '#03181E'; variant = 1; style = 'egateExit'; s1 = @(3.6, 5.2); s2 = @(2.4, 3.2); gate = $true; sign = 'EXIT' },
     # --- round 2: self-service endorsement kiosk (violet, tall) ---
     @{ id = 'self_endorsement'; base = '#F0EAF8'; base2 = '#DCD0F0'; trim = '#4B3F63'; accent = '#8A5CF0'; fg = '#D8C6FF'; bg = '#120A26'; variant = 3; style = 'selfEndorse'; s1 = @(5, 6.6); s2 = @(3, 1.875) },
     # --- 1.2.0: self-service visa kiosk (blue, low desk) ---
@@ -157,8 +185,10 @@ foreach ($d in $devices) {
     $d.px2 = @([int][Math]::Round($d.uv2[0] * 4), [int][Math]::Round($d.uv2[1] * 4))
 }
 
-. (Join-Path $root 'tools\lib_device_textures.ps1')
-. (Join-Path $root 'tools\lib_device_models.ps1')
+# The libraries live next to this script, not under the output root: -Root only
+# redirects generated artefacts.
+. (Join-Path $PSScriptRoot 'lib_device_textures.ps1')
+. (Join-Path $PSScriptRoot 'lib_device_models.ps1')
 
 $tagValues = @()
 foreach ($d in $devices) {
@@ -172,8 +202,11 @@ foreach ($d in $devices) {
     foreach ($entry in $map.GetEnumerator()) {
         if ($d.gate) {
             foreach ($open in @('false', 'true')) {
+                # closed gates use the model WITH static door leaves; open=true
+                # uses the matching _open shell without leaves
+                $modelId = if ($open -eq 'true') { "$($d.id)_open" } else { $d.id }
                 $variants["facing=$($entry.Key),open=$open"] = [ordered]@{
-                    model = "veriborder:block/$($d.id)"; y = $entry.Value
+                    model = "veriborder:block/$modelId"; y = $entry.Value
                 }
             }
         } else {
@@ -215,10 +248,10 @@ Write-Json (Join-Path $needs 'needs_stone_tool.json') ([ordered]@{ replace = $fa
 
 # ---- E-Gate entity textures (entry gate + exit gate) ----------------------
 # EGateRenderer box unwraps are fixed; only these regions are sampled:
-#   door  (texOffs 0,0 / 12,0, box 4x18x1) -> north (u+1,v+1,4x18),
-#                                             south (u+6,v+1,4x18)
-#   light (texOffs 0,32, box 8x1x1)        -> north (u+1,v+1,8x1)
-#   scan  (texOffs 0,38, box 8x1x1)        -> north (u+1,v+1,8x1)
+#   door  (texOffs 0,0 / 16,0, box 6x10x1) -> north (u+1,v+1,6x10),
+#                                             south (u+7,v+1,6x10)
+#   light (texOffs 0,32, box 2.8x0.46x0.1) -> north (u+1,v+1,2.8x0.46)
+#   scan  (texOffs 0,38, box 12x1x1.2)     -> north (u+1,v+1,12x1)
 # GDI+ Graphics.Clear ignores the alpha channel, so these are composed in a raw
 # BGRA buffer and written with LockBits to keep real PNG transparency.
 function New-Rgba([int]$w, [int]$h) {
@@ -314,28 +347,89 @@ New-GateEntityTextures 'egate' 198 212 219 140 204 224 90 230 236
 # exit gate: dark bronze frame + warm amber glass and scan
 New-GateEntityTextures 'exit_gate' 120 86 70 255 196 130 255 190 90
 
-# The BER blade boxes are 6 x 9 x 1 px; draw dedicated 6x9 framed glass panels
-# at (0,0) and (8,0) so texOffs(0,0)/(8,0) samples clean leaves.
+# The BER leaves are 6 x 10 x 1 px boxes: each unwrap covers north (u+1,v+1,
+# 6x10), south (u+7,v+1,6x10), 1 px east/west edge strips at u+0, and 6 x 1
+# up/down caps at v+0. Left leaf uses texOffs(0,0), right leaf texOffs(16,0),
+# so the four framed-glass panels are drawn at x = 1, 7, 17, 23 with the metal
+# edge islands at x = 0 and 16. The leaves keep real alpha in the panes so the
+# passage stays visible through the closed door.
+# The BER leaves are 6 x 10 x 1 px boxes: each unwrap covers north (u+1,v+1,
+# 6x10), south (u+7,v+1,6x10), 1 px east/west edge strips at u+0, and 6 x 1
+# up/down caps at v+0. Left leaf uses texOffs(0,0), right leaf texOffs(16,0),
+# so the four leaf faces are drawn at x = 1, 7, 17, 23 with metal edge islands
+# at x = 0 and 16. The panes stay translucent (a real frosted cyan tint) while
+# the baked 1 px frame + cyan edge line read as a framed door even at distance;
+# EGateRenderer additionally draws opaque frame bars as solid geometry.
 function New-GateBladeTexture([string]$path, [int]$fr, [int]$fg, [int]$fb, [int]$gr, [int]$gg, [int]$gb) {
     [byte[]]$buf = New-Rgba 64 64
-    foreach ($x0 in @(0, 8)) {
+    foreach ($x0 in @(1, 7, 17, 23)) {
+        # glass body (frosted cyan tint, clearly translucent)
+        Rgba-Fill $buf 64 64 $x0 1 6 10 $gr $gg $gb 172
+        # diagonal frost band across the pane
+        for ($i = 0; $i -lt 4; $i++) {
+            Rgba-Fill $buf 64 64 ($x0 + 1 + $i) (2 + $i) 2 6 $gr $gg $gb 218
+            Rgba-Fill $buf 64 64 ($x0 + 1 + $i) (2 + $i) 1 6 235 252 255 165
+        }
+        # dark metal frame: 1 px all round, plus mid rail and lock plate
+        Rgba-Fill $buf 64 64 $x0 1 6 1 $fr $fg $fb 255
+        Rgba-Fill $buf 64 64 $x0 10 6 1 $fr $fg $fb 255
+        Rgba-Fill $buf 64 64 $x0 1 1 10 $fr $fg $fb 255
+        Rgba-Fill $buf 64 64 ($x0 + 5) 1 1 10 $fr $fg $fb 255
+        Rgba-Fill $buf 64 64 ($x0 + 1) 5 4 1 $fr $fg $fb 255
+        Rgba-Fill $buf 64 64 ($x0 + 4) 3 2 2 $fr $fg $fb 255
+        # cyan edge light under the top rail and a lock indicator
+        Rgba-Fill $buf 64 64 ($x0 + 1) 2 4 1 96 232 250 255
+        Rgba-Fill $buf 64 64 ($x0 + 4) 4 1 1 180 255 255 255
+        # metal highlight on the stiles
+        Rgba-Fill $buf 64 64 ($x0 + 1) 3 1 6 255 255 255 45
+        # cap islands (up / down faces) at v+0
         Rgba-Fill $buf 64 64 $x0 0 6 1 $fr $fg $fb 255
-        Rgba-Fill $buf 64 64 $x0 8 6 1 $fr $fg $fb 255
-        Rgba-Fill $buf 64 64 $x0 0 1 9 $fr $fg $fb 255
-        Rgba-Fill $buf 64 64 ($x0 + 5) 0 1 9 $fr $fg $fb 255
-        Rgba-Fill $buf 64 64 ($x0 + 1) 1 4 7 $gr $gg $gb 92
-        Rgba-Fill $buf 64 64 ($x0 + 1) 1 4 1 $gr $gg $gb 130
-        Rgba-Fill $buf 64 64 ($x0 + 2) 2 1 5 255 255 255 55
-        Rgba-Fill $buf 64 64 ($x0 + 3) 3 1 3 255 255 255 32
-        # UV island for east/west/up/down faces (kept glassy)
-        Rgba-Fill $buf 64 64 ($x0 + 6) 0 2 9 $gr $gg $gb 70
-        Rgba-Fill $buf 64 64 $x0 9 8 1 $gr $gg $gb 55
     }
+    # east / west edge strips of both boxes
+    Rgba-Fill $buf 64 64 0 1 1 16 $fr $fg $fb 255
+    Rgba-Fill $buf 64 64 16 1 1 16 $fr $fg $fb 255
+    # faint glass wash so mipmaps stay glassy instead of pulling transparent black
+    Rgba-Fill $buf 64 64 0 20 64 16 $gr $gg $gb 12
     Save-Rgba $buf 64 64 $path
 }
-New-GateBladeTexture (Join-Path $entityTex 'egate_door.png') 198 212 219 140 204 224
-New-GateBladeTexture (Join-Path $entityTex 'exit_gate_door.png') 120 86 70 255 196 130
 
+# Opaque brushed-metal sheet for the geometry frame bars (entitySolid).
+function New-GateDoorFrameTexture([string]$path, [int]$r, [int]$g, [int]$b) {
+    [byte[]]$buf = New-Rgba 32 32
+    Rgba-Fill $buf 32 32 0 0 32 32 $r $g $b 255
+    for ($y = 0; $y -lt 32; $y += 2) {
+        Rgba-Fill $buf 32 32 0 $y 32 1 ($r + 16) ($g + 16) ($b + 18) 255
+    }
+    for ($y = 1; $y -lt 32; $y += 4) {
+        Rgba-Fill $buf 32 32 0 $y 32 1 ([Math]::Max(0, $r - 8)) ([Math]::Max(0, $g - 8)) ([Math]::Max(0, $b - 6)) 255
+    }
+    Rgba-Fill $buf 32 32 0 0 32 1 ($r + 40) ($g + 42) ($b + 46) 255
+    Rgba-Fill $buf 32 32 0 31 32 1 ([Math]::Max(0, $r - 10)) ([Math]::Max(0, $g - 10)) ([Math]::Max(0, $b - 8)) 255
+    Rgba-Fill $buf 32 32 2 3 2 2 90 210 240 255
+    Rgba-Fill $buf 32 32 27 26 2 2 90 210 240 255
+    Save-Rgba $buf 32 32 $path
+}
+
+# Emissive cyan inlay for the leading-edge lock indicator.
+function New-GateDoorGlowTexture([string]$path) {
+    [byte[]]$buf = New-Rgba 16 16
+    for ($y = 0; $y -lt 16; $y++) {
+        $t = [Math]::Abs($y - 8) / 8.0
+        $r = [int](100 * (1 - $t) + 8 * $t)
+        $g = [int](240 * (1 - $t) + 60 * $t)
+        $b = [int](255 * (1 - $t) + 80 * $t)
+        Rgba-Fill $buf 16 16 0 $y 16 1 $r $g $b 255
+    }
+    Rgba-Fill $buf 16 16 0 7 16 2 235 255 255 255
+    Save-Rgba $buf 16 16 $path
+}
+
+New-GateBladeTexture (Join-Path $entityTex 'egate_door.png') 28 34 42 120 214 235
+New-GateDoorFrameTexture (Join-Path $entityTex 'egate_door_frame.png') 28 34 42
+New-GateDoorGlowTexture (Join-Path $entityTex 'egate_door_glow.png')
+New-GateBladeTexture (Join-Path $entityTex 'exit_gate_door.png') 34 30 26 120 214 235
+New-GateDoorFrameTexture (Join-Path $entityTex 'exit_gate_door_frame.png') 34 30 26
+New-GateDoorGlowTexture (Join-Path $entityTex 'exit_gate_door_glow.png')
 # ---- documents ------------------------------------------------------------
 function New-CardTexture([string]$name, [string]$title, [string]$subtitle, [string]$bg1, [string]$bg2, [string]$emblem, [bool]$booklet, [string]$code) {
     $bmp, $g = New-BitmapSmooth 64 64
@@ -353,22 +447,34 @@ function New-CardTexture([string]$name, [string]$title, [string]$subtitle, [stri
     $g.FillRectangle($grad, $x, $y, $w, $h); $grad.Dispose()
     $border = Pen $gold 1.5; $g.DrawRectangle($border, $x, $y, $w, $h); $border.Dispose()
     Fill-Rect $g ($x + 2) ($y + 2) ($w - 4) 1 (C 255 255 255 70)
-    $emblemX = if ($booklet) { $x + 8 } else { $x + 7 }
-    $emblemY = if ($booklet) { $y + 9 } else { $y + 7 }
-    $ep = Pen $gold 1.2
-    $g.DrawEllipse($ep, $emblemX, $emblemY, 11, 11)
-    $g.DrawLine($ep, $emblemX + 5, $emblemY + 1, $emblemX + 5, $emblemY + 10)
-    $g.DrawLine($ep, $emblemX + 1, $emblemY + 5, $emblemX + 10, $emblemY + 5)
-    $ep.Dispose()
-    $fontTitle = Font 7
-    Draw-Text $g $title $fontTitle $gold ($x + 21) ($y + 6)
-    $fontSmall = Font 5
-    Draw-Text $g $subtitle $fontSmall (C 240 245 250 220) ($x + 21) ($y + 15)
+    # Booklet covers (passport) keep the gold emblem above the centred title.
+    if ($booklet) {
+        $ep = Pen $gold 1.2
+        $g.DrawEllipse($ep, ($x + 8), ($y + 9), 11, 11)
+        $g.DrawLine($ep, ($x + 13), ($y + 10), ($x + 13), ($y + 19))
+        $g.DrawLine($ep, ($x + 9), ($y + 14), ($x + 18), ($y + 14))
+        $ep.Dispose()
+    }
+    # Flat cards (ID card / permit) have a 56 px face with a full photo + MRZ block,
+    # so the heading owns the top band: centred on the card and auto-fitted to the
+    # 2 px inner margin. The old x+21 / Font 7 title measured 52-69 px wide and ran
+    # 17-29 px past the face and off the canvas; the emblem that used to sit at
+    # (x+7, y+7) is omitted here because it would collide with the heading band.
+    if (-not $booklet) {
+        $innerW = $w - 4
+        Draw-TextCentered $g $title (Font (Get-FitFontSize $g $title 6 4 $innerW)) $gold $x ($y + 4) $w
+        if ($subtitle -ne '') {
+            Draw-TextCentered $g $subtitle (Font (Get-FitFontSize $g $subtitle 4 3 $innerW)) (C 240 245 250 220) $x ($y + 10) $w
+        }
+    }
     if ($booklet) {
         for ($i = 0; $i -lt 5; $i++) {
             Draw-Line $g ($x + 8) ($y + 25 + $i * 4) ($x + 30) ($y + 25 + $i * 4) (C 255 255 255 65) 1
         }
-        Draw-TextCentered $g 'PASSPORT' (Font 5) (C 255 240 210 190) $x ($y + 44) $w
+        # 8 glyphs of Arial bold 5 px measure 27 px wide: inside the w=38 cover that is
+        # 5 px left + 6 px right padding, and 3 px above the bottom edge (ink y 51..54).
+        # The old copy also drew the title at x+21 with Font 7 (40 px wide) -> clipped.
+        Draw-TextCentered $g $title (Font 5) (C 255 240 210 190) $x ($y + 44) $w
     } else {
         Fill-Rect $g ($x + 8) ($y + 14) 13 19 (C 12 22 32 150)
         $face = Brush (C 145 170 190 180); $g.FillEllipse($face, $x + 12, $y + 17, 6, 6); $face.Dispose()
@@ -398,12 +504,22 @@ function New-CustomDocTexture([string]$name, [bool]$booklet, [bool]$permit) {
     $g.FillRectangle($grad, $x, $y, $w, $h); $grad.Dispose()
     $border = Pen (C 245 248 250) 2; $g.DrawRectangle($border, $x, $y, $w, $h); $border.Dispose()
     Fill-Rect $g ($x + 3) ($y + 3) ($w - 6) 1 (C 255 255 255)
+    # booklet: emblem sits centred under the title; the other card types keep the
+    # original top-left emblem so their textures stay byte-identical.
+    $emblemX = if ($booklet) { $x + 14 } else { $x + 7 }
+    $emblemY = if ($booklet) { $y + 11 } else { $y + 7 }
     $ep = Pen (C 225 233 238) 1.2
-    $g.DrawEllipse($ep, ($x + 7), ($y + 7), 10, 10)
-    $g.DrawLine($ep, ($x + 12), ($y + 8), ($x + 12), ($y + 16))
-    $g.DrawLine($ep, ($x + 8), ($y + 12), ($x + 16), ($y + 12))
+    $g.DrawEllipse($ep, $emblemX, $emblemY, 10, 10)
+    $g.DrawLine($ep, ($emblemX + 5), ($emblemY + 1), ($emblemX + 5), ($emblemY + 9))
+    $g.DrawLine($ep, ($emblemX + 1), ($emblemY + 5), ($emblemX + 9), ($emblemY + 5))
     $ep.Dispose()
-    Draw-Text $g 'CUSTOM' (Font 6) (C 82 92 99) ($x + 21) ($y + 6)
+    if ($booklet) {
+        # neutral cover: centred title (4 px side padding) instead of the old
+        # x+21 / Font 6 placement, which ran 9 px past the cover edge.
+        Draw-TextCentered $g 'CUSTOM' (Font 5) (C 82 92 99) $x ($y + 4) $w
+    } else {
+        Draw-Text $g 'CUSTOM' (Font 6) (C 82 92 99) ($x + 21) ($y + 6)
+    }
     if ($booklet) {
         for ($i = 0; $i -lt 5; $i++) { Draw-Line $g ($x + 8) ($y + 26 + $i * 4) ($x + 30) ($y + 26 + $i * 4) (C 70 78 84 110) 1 }
         Draw-TextCentered $g 'DOCUMENT' (Font 5) (C 60 70 76) $x ($y + 44) $w
@@ -418,17 +534,19 @@ function New-CustomDocTexture([string]$name, [bool]$booklet, [bool]$permit) {
     Save-Bitmap $bmp $g (Join-Path $itemTex "$name.png")
 }
 
-New-CardTexture 'id_card_cn' 'IDENTITY CARD' 'CN / RESIDENT' '#1A5E8C' '#3FA7C9' '#E5C76B' $false 'CN'
-New-CardTexture 'id_card_hk' 'IDENTITY CARD' 'HK / PERMANENT' '#732532' '#B64B5E' '#E7C87A' $false 'HK'
-New-CardTexture 'passport_cn' 'PASSPORT' 'CHINA' '#7E1F24' '#B73A3D' '#E7C878' $true 'CN'
-New-CardTexture 'passport_hk' 'PASSPORT' 'HONG KONG' '#1A2E57' '#33558E' '#D9C27A' $true 'HK'
-New-CardTexture 'passport_mo' 'PASSPORT' 'MACAU' '#1D513D' '#2F7A5D' '#D7C47B' $true 'MO'
-New-CardTexture 'passport_us' 'PASSPORT' 'UNITED STATES' '#152C55' '#2C538F' '#DCC77C' $true 'US'
-New-CardTexture 'passport_jp' 'PASSPORT' 'JAPAN' '#7E2027' '#B3434B' '#E4C977' $true 'JP'
-New-CardTexture 'hk_macao_permit' 'EXIT-ENTRY PERMIT' 'HK / MACAU' '#173E73' '#2D67A8' '#E1C574' $false 'CN'
-New-CustomDocTexture 'custom_id_card' $false $false
-New-CustomDocTexture 'custom_passport' $true $false
-New-CustomDocTexture 'custom_permit' $false $true
+if (-not $NoDocuments) {
+    New-CardTexture 'id_card_cn' 'IDENTITY CARD' 'CN / RESIDENT' '#1A5E8C' '#3FA7C9' '#E5C76B' $false 'CN'
+    New-CardTexture 'id_card_hk' 'IDENTITY CARD' 'HK / PERMANENT' '#732532' '#B64B5E' '#E7C87A' $false 'HK'
+    New-CardTexture 'passport_cn' 'PASSPORT' '' '#7E1F24' '#B73A3D' '#E7C878' $true 'CN'
+    New-CardTexture 'passport_hk' 'PASSPORT' '' '#1A2E57' '#33558E' '#D9C27A' $true 'HK'
+    New-CardTexture 'passport_mo' 'PASSPORT' '' '#1D513D' '#2F7A5D' '#D7C47B' $true 'MO'
+    New-CardTexture 'passport_us' 'PASSPORT' '' '#152C55' '#2C538F' '#DCC77C' $true 'US'
+    New-CardTexture 'passport_jp' 'PASSPORT' '' '#7E2027' '#B3434B' '#E4C977' $true 'JP'
+    New-CardTexture 'hk_macao_permit' 'EXIT-ENTRY PERMIT' 'HK / MACAU' '#173E73' '#2D67A8' '#E1C574' $false 'CN'
+    New-CustomDocTexture 'custom_id_card' $false $false
+    New-CustomDocTexture 'custom_passport' $true $false
+    New-CustomDocTexture 'custom_permit' $false $true
+}
 
 # modifier icon
 $bmp, $g = New-BitmapSmooth 32 32

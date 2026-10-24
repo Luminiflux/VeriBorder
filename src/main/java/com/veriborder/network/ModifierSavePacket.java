@@ -8,18 +8,18 @@ import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
+/** Client → server "save this modified document". Protocol 2: null-safe payload. */
 public class ModifierSavePacket {
     private final int slot;
     private final CompoundTag data;
 
     public ModifierSavePacket(int slot, CompoundTag data) {
         this.slot = slot;
-        this.data = data;
+        this.data = data == null ? new CompoundTag() : data;
     }
 
     public ModifierSavePacket(FriendlyByteBuf buffer) {
-        this.slot = buffer.readVarInt();
-        this.data = buffer.readNbt();
+        this(buffer.readVarInt(), buffer.readNbt());
     }
 
     public void encode(FriendlyByteBuf buffer) {
@@ -32,9 +32,18 @@ public class ModifierSavePacket {
         ctx.enqueueWork(() -> {
             ServerPlayer player = ctx.getSender();
             if (player != null) {
-                DeviceService.saveFromModifier(player, slot, data == null ? new CompoundTag() : data);
+                DeviceService.saveFromModifier(player, slot, data);
             }
         });
         ctx.setPacketHandled(true);
+    }
+
+    public int slot() {
+        return slot;
+    }
+
+    /** Never {@code null}. */
+    public CompoundTag data() {
+        return data;
     }
 }

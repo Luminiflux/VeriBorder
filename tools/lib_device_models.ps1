@@ -421,222 +421,186 @@ function Build-StationVerifier {
 }
 
 # ==================================================================== 11 E-GATE
-# The gate is DELIBERATELY LARGER THAN THE CONTROLLER BLOCK: the static model
-# spans x -8..24 (32 px = 2 blocks), y 0..24 (1.5 blocks) and z -2..18, so it
-# reaches 8 px into each neighbouring block. The controller block stays the
-# 1-block anchor; EGateBlock owns the (single-block) collision.
-# The central channel x 4..12, z 0.4..13 is kept completely clear: that is the
-# 8 px passage in which EGateRenderer animates the glass wings.
-function BM {
-    param(
-        [double]$x1, [double]$y1, [double]$z1,
-        [double]$x2, [double]$y2, [double]$z2,
-        [string]$tex,
-        [bool]$mirror,
-        [hashtable]$over = $null,
-        [hashtable]$uv = $null,
-        [hashtable]$rot = $null
-    )
-    if (-not $mirror) {
-        B $x1 $y1 $z1 $x2 $y2 $z2 $tex $over $uv $rot
-        return
-    }
-    # mirror around the controller block centre x = 8 (16 - x)
-    $mirroredRot = $null
-    if ($rot) {
-        $angle = [double]$rot.angle
-        if ($rot.axis -ne 'x') { $angle = -$angle }
-        $o = $rot.origin
-        $mirroredRot = @{ axis = $rot.axis; angle = $angle; origin = @((16.0 - $o[0]), $o[1], $o[2]) }
-    }
-    B (16.0 - $x2) $y1 $z1 (16.0 - $x1) $y2 $z2 $tex $over $uv $mirroredRot
+# Split dual-pillar gate (ROUND7 reference). Two identical 4 px wide x 14 px
+# deep pillars (x -2..2 and 14..18, z 1..15) rise ~21 px with a 12 px clear
+# central passage. Matte white body, near-black tapered cap with a rounded
+# crown and a rear overhang, glowing portrait screen in a black bezel, black
+# card reader, cyan LED strip under the cap and a green chevron matrix.
+#
+# The animated framed-glass leaves are drawn by EGateRenderer (6 x 10 x 1 px
+# boxes sliding 6 px behind the pillars); the static shell contributes the door
+# floor track only. Nothing of the shell enters x 2..14, so the passage is
+# genuinely empty in the block model.
+#
+# Palette: body #F2F4F3 / #E2E6E4, trim #1F242B, accent cyan #22B8D6.
+# Stay inside the preview gate envelope (x -2.8..18.8, y 0..22.6, z -0.5..16.5)
+# and out of the clear box x 2.3..13.7, y 0.4..15, z 0.4..15.
+
+# Inner-face box helper: distances d1..d2 measured outward from the pillar's
+# inner face ($ix) along $s (+1 = east, -1 = west). Point order is normalised.
+function Gate-Inner([double]$ix, [double]$s, [double]$d1, [double]$y1, [double]$z1, [double]$d2, [double]$y2, [double]$z2, [string]$tex, [hashtable]$over = $null, [hashtable]$uv = $null) {
+    $a = $ix + $s * $d1
+    $b = $ix + $s * $d2
+    if ($a -gt $b) { $t = $a; $a = $b; $b = $t }
+    B $a $y1 $z1 $b $y2 $z2 $tex $over $uv
 }
 
-# one side pedestal (authored on the left, x -8..4); $mirror flips it to x 12..24
-function Gate-Pedestal([bool]$mirror, [bool]$reader, [bool]$display) {
-    $u = Uv1
-    $desk = @{ axis = 'x'; angle = -22.5; origin = @(0, 8.0, -1.8) }
-    # plinth, toe kick and low front counter
-    BM -8 0 -2 4 0.55 18 trim $mirror
-    BM -7.85 0.55 -1.85 3.9 1.05 17.85 body2 $mirror
-    BM -7.7 1.05 -1.7 3.75 1.35 17.7 trim $mirror
-    BM -7.7 1.35 -1.7 3.75 7.2 5.9 body2 $mirror
-    BM -7.8 7.2 -1.8 3.85 7.95 6.0 body $mirror
-    BM -7.25 1.85 -1.86 3.25 6.75 -1.7 body $mirror
-    BM -7.0 3.4 -1.9 3.0 4.0 -1.86 accent $mirror
-    BM -7.0 1.6 -1.88 3.0 2.0 -1.86 warning $mirror
-    BM -6.9 4.6 -1.9 -2.9 6.3 -1.86 trim $mirror
-    # 22.5 deg sloped desk rising from the counter to the rear cabinet
-    BM -7.7 8.0 -1.8 3.75 8.55 5.9 body2 $mirror $null $null $desk
-    BM -7.9 7.95 -1.85 -7.65 8.6 5.95 body2 $mirror $null $null $desk
-    BM 3.6 7.95 -1.85 3.85 8.6 5.95 body2 $mirror $null $null $desk
-    BM -7.7 7.95 5.0 3.75 11.5 5.95 body2 $mirror
-    BM -7.4 7.9 -1.95 3.4 8.0 -1.8 led $mirror
-    # tall rear cabinet
-    BM -7.8 1.35 5.9 3.85 15.2 17.8 body $mirror
-    BM -7.5 11.5 5.72 3.5 14.6 5.9 body2 $mirror
-    BM 3.85 1.5 5.9 3.98 15.2 17.6 body2 $mirror
-    BM 3.86 2.0 7.0 3.97 14.2 7.6 led $mirror
-    BM 3.86 2.0 10.6 3.97 14.2 11.2 led $mirror
-    BM 3.85 2.2 14.0 3.97 6.0 14.6 trim $mirror
-    BM -7.94 1.6 -1.5 -7.78 14.8 17.6 body2 $mirror
-    BM -7.98 3.0 3.0 -7.94 10.4 13.0 accent $mirror
-    # rear cabinet front detailing above the sloped desk
-    BM -7.1 12.1 5.66 -0.3 13.9 5.72 trim $mirror
-    BM -7.1 12.1 5.6 -6.5 14.4 5.66 accent $mirror
-    BM -7.3 14.95 5.72 3.3 15.15 5.86 led $mirror
-    # full-height wing pocket at the passage edge: the 18 px opening leaves slide
-    # into this pocket, so an open gate never shows glass floating over the desk.
-    # Its inner face is x = 4.0, the edge of the clear 8 px passage.
-    BM -0.1 0.55 -1.9 4 19.3 2.35 body2 $mirror
-    BM -0.1 18.9 -1.94 4 19.3 2.4 trim $mirror
-    BM 0.18 1.2 -1.96 0.55 18.3 -1.9 led $mirror
-    BM 3.45 1.2 -1.96 3.82 18.3 -1.9 accent $mirror
-    BM 0 7.1 -1.96 4 7.45 -1.9 trim $mirror
-    # stepped/bevelled top
-    BM -7.9 15.2 5.8 3.9 15.8 17.9 body2 $mirror
-    BM -7.5 15.8 6.2 3.5 16.3 17.5 body $mirror
-    BM 3.3 15.2 6.0 3.9 15.8 17.6 body2 $mirror $null $null @{ axis = 'z'; angle = -22.5; origin = @(3.9, 15.8, 0) }
-    BM -7.9 15.2 6.0 -7.3 15.8 17.6 body2 $mirror $null $null @{ axis = 'z'; angle = 22.5; origin = @(-7.9, 15.8, 0) }
-    # rear pylon carrying the overhead sign gantry
-    BM -8 15.5 14.2 -4.2 23.8 17.8 body $mirror
-    BM -8 23.8 14.0 -3.9 24.0 18.0 body2 $mirror
-    BM -7.7 16.2 14.04 -4.7 22.6 14.2 body2 $mirror
-    BM -4.2 16.6 15.0 -4.12 22.8 15.6 led $mirror
-    BM -7.4 17.2 14.0 -6.2 20.8 14.04 accent $mirror
-    # interface options (only one pedestal gets each, so entry/exit differ)
-    if ($reader) {
-        BM -6.6 4.9 -2.35 -2.1 7.05 -1.86 body2 $mirror
-        BM -6.2 5.35 -2.42 -2.5 6.55 -2.35 screen $mirror @{ north = 'screen' } @{ north = @(0, 0, 16, 5.2) }
-        BM -6.0 4.35 -2.3 -3.3 4.8 -2.15 trim $mirror
-        BM -5.8 4.45 -2.42 -3.5 4.7 -2.3 paper $mirror
-        BM -4.1 5.15 -2.44 -3.4 5.55 -2.42 led $mirror
-    }
-    if ($display) {
-        BM -6.8 4.6 -2.35 -1.5 7.7 -1.86 body2 $mirror
-        BM -6.55 5.0 -2.42 -2.95 7.25 -2.35 screen $mirror @{ north = 'screen' } @{ north = $u }
-        BM -2.7 6.6 -2.42 -1.85 7.2 -2.35 detail $mirror
-        BM -2.7 5.8 -2.42 -1.85 6.4 -2.35 accent $mirror
-        BM -2.7 5.0 -2.42 -1.85 5.6 -2.35 led $mirror
-    }
-}
+function Gate-Pillar([double]$x1, [double]$x2, [bool]$east, [bool]$entry) {
+    $z1 = 1.0
+    $z2 = 15.0
+    $ix = if ($east) { $x2 } else { $x1 }
+    $s = if ($east) { 1.0 } else { -1.0 }
+    $midx = ($x1 + $x2) * 0.5
+    $innerFace = if ($east) { 'east' } else { 'west' }
 
-# floor threshold, door track and entry/exit guide chevrons
-function Gate-Floor([string]$theme) {
-    B 4 0 -2 12 0.2 0.4 trim
-    B 4.6 0.2 -1.6 11.4 0.28 0.2 accent
-    B 4 0.2 -0.2 12 0.32 1.9 trim
-    B 4.4 0.32 0.5 4.9 0.38 1.7 led
-    B 11.1 0.32 0.5 11.6 0.38 1.7 led
-    B 4 0 15.6 12 0.2 18 trim
-    B 4.6 0.2 16.4 11.4 0.28 17.9 accent
-    if ($theme -eq 'exit') {
-        B 4.8 0.2 2.6 11.2 0.27 3.4 warning
-        B 5.2 0.2 4.6 10.8 0.27 5.2 accent
-        B 5.6 0.2 6.4 10.4 0.27 6.8 warning
-        B 6.0 0.2 7.6 10.0 0.27 8.4 accent
+    # inner-face texture overrides (only full-square UVs, so the software
+    # preview and Minecraft sample exactly the same texture area)
+    $cyanIn = @{}; $cyanIn[$innerFace] = 'cyan'
+
+    # ---- recessed black toe kick, slim white base, cyan reveal line
+    B ($x1 + 0.14) 0 ($z1 + 0.18) ($x2 - 0.14) 0.2 ($z2 - 0.18) trim
+    B ($x1 + 0.02) 0.2 ($z1 + 0.04) ($x2 - 0.02) 0.92 ($z2 - 0.04) body2
+    B ($x1 + 0.05) 0.92 ($z1 + 0.06) ($x2 - 0.05) 0.99 ($z2 - 0.06) accent
+
+    # ---- matte white body (dominant volume); seams are geometry only, so no
+    # grey skins cover the white faces
+    B $x1 0.99 $z1 $x2 18.05 $z2 body
+    B ($x1 + 0.2) 4.55 1.005 ($x2 - 0.2) 4.67 1.04 body2
+    B ($x1 + 0.2) 13.3 1.005 ($x2 - 0.2) 13.42 1.04 body2
+
+    # ---- glowing portrait screen in a black bezel on the FRONT face
+    B ($x1 + 0.45) 6.7 0.83 ($x2 - 0.45) 12.95 0.95 trim
+    B ($x1 + 0.6) 7.0 0.76 ($x2 - 0.6) 12.65 0.84 tablet @{ north = 'tablet' }
+    B ($x1 + 0.6) 6.42 0.78 ($x2 - 0.6) 6.56 0.86 cyan @{ north = 'cyan' }
+    # black card / NFC reader panel under the screen
+    B ($x1 + 0.3) 4.9 0.84 ($x2 - 0.3) 6.15 0.96 trim
+    B ($x1 + 0.52) 5.12 0.77 ($x2 - 0.52) 5.5 0.85 accent
+    B ($x1 + 0.52) 5.68 0.77 ($x2 - 0.52) 5.94 0.85 led
+    # ENTRY / EXIT sign board between screen and cap
+    B ($x1 + 0.2) 14.0 0.85 ($x2 - 0.2) 15.95 0.95 sign
+
+    # ---- inner face: slim black status column and cyan edge light
+    Gate-Inner $ix $s 0.0 5.4 1.55 0.14 14.6 2.35 trim
+    Gate-Inner $ix $s 0.14 5.65 1.7 0.2 7.0 2.2 cyan $cyanIn
+    Gate-Inner $ix $s 0.14 7.35 1.7 0.2 12.65 2.2 led $cyanIn
+    Gate-Inner $ix $s 0.14 12.95 1.7 0.2 14.35 2.2 cyan $cyanIn
+    Gate-Inner $ix $s 0.1 3.4 1.3 0.16 17.3 1.42 cyan $cyanIn
+
+    # ---- cyan LED strip under the cap on front, inner and outer faces
+    B ($x1 + 0.08) 17.45 0.9 ($x2 - 0.08) 18.06 1.02 cyan @{ north = 'cyan' }
+    Gate-Inner $ix $s 0.1 17.45 1.35 0.18 18.06 14.65 cyan $cyanIn
+    if ($east) {
+        B ($x1 - 0.2) 17.45 0.95 ($x1 - 0.12) 18.06 14.85 cyan @{ west = 'cyan' }
     } else {
-        B 5.0 0.2 3.0 11.0 0.27 3.6 led
-        B 5.4 0.2 4.4 10.6 0.27 5.0 led
-        B 5.8 0.2 5.8 10.2 0.27 6.4 led
+        B ($x2 + 0.12) 17.45 0.95 ($x2 + 0.2) 18.06 14.85 cyan @{ east = 'cyan' }
     }
-}
 
-# overhead sign gantry shared by both gates (sign face is a 16x4 board)
-function Gate-Header([string]$theme) {
-    B -8 20.4 14.2 24 23.8 17.8 body2
-    B -8 20.4 14.06 24 21.0 14.2 body
-    B -8 23.8 14.0 24 24.0 18.0 trim
-    if ($theme -eq 'exit') {
-        B -8 19.6 13.98 24 20.4 14.06 warning
-        B -8 19.62 13.94 -1.4 20.0 13.98 accent
-        B 17.4 19.62 13.94 24 20.0 13.98 accent
+    # ---- black cap: flush base, brim, tapered body, rounded crown, overhang
+    B $x1 17.9 $z1 $x2 18.4 $z2 trim
+    B ($x1 - 0.22) 18.35 ($z1 - 0.18) ($x2 + 0.22) 18.82 ($z2 + 0.18) trim
+    B ($x1 - 0.16) 18.78 ($z1 - 0.1) ($x2 + 0.16) 19.85 ($z2 + 0.12) trim
+    B ($x1 - 0.08) 19.78 ($z1 + 0.15) ($x2 + 0.08) 20.2 ($z2 - 0.15) trim
+    # 22.5 deg crown slabs: long edges then short edges, all overlapping the
+    # tapered body so the cap is continuous with the pillar (never floating)
+    B ($x1 - 0.16) 19.55 ($z1 - 0.45) ($x2 + 0.16) 20.12 ($z1 + 0.55) trim @{} @{} @{ axis = 'x'; angle = -22.5; origin = @($midx, 19.7, ($z1 - 0.05)) }
+    B ($x1 - 0.16) 19.55 ($z2 - 0.55) ($x2 + 0.16) 20.12 ($z2 + 0.45) trim @{} @{} @{ axis = 'x'; angle = 22.5; origin = @($midx, 19.7, ($z2 + 0.05)) }
+    # (no rotated side wings: they would push the silhouette past the 20 px
+    # envelope; the stepped brim/body already rounds the cap in plan)
+    B ($x1 - 0.02) 20.0 ($z1 + 0.65) ($x2 + 0.02) 20.34 ($z2 - 0.65) trim
+    # green direction matrix on the cap face, under the camera
+    B ($x1 + 0.72) 18.9 0.72 ($x2 - 0.72) 19.72 0.8 arrow @{ north = 'arrow' }
+    # rear overhang attached to the cap, swept lip, cyan downlight
+    B ($x1 - 0.08) 18.8 14.9 ($x2 + 0.08) 20.02 16.18 trim
+    B ($x1 - 0.08) 18.86 16.0 ($x2 + 0.08) 19.72 16.38 trim @{} @{} @{ axis = 'x'; angle = 22.5; origin = @($midx, 19.25, 16.15) }
+    B ($x1 + 0.36) 18.72 15.12 ($x2 - 0.36) 18.82 15.94 cyan @{ down = 'cyan' }
+    # rear service hatch on the white body
+    B ($x1 + 0.25) 2.6 15.08 ($x2 - 0.25) 12.6 15.16 body2
+    B ($x1 + 0.42) 2.85 15.16 ($x2 - 0.42) 12.35 15.22 trim
+
+    # ---- top module: identity camera bar (entry) or scan wedge (exit)
+    if ($entry) {
+        B ($x1 + 0.28) 20.28 0.75 ($x2 - 0.28) 21.18 2.5 trim
+        B ($x1 + 0.44) 20.44 0.67 ($x2 - 0.44) 21.04 0.76 glass @{ north = 'glass' }
+        B ($x1 + 0.76) 20.56 0.63 ($x2 - 0.76) 20.9 0.7 detail
+        B ($x1 + 0.54) 20.9 2.5 ($x2 - 0.54) 21.08 2.59 body2
+        B ($x1 + 0.92) 20.62 2.59 ($x2 - 0.92) 20.96 2.65 cyan
     } else {
-        B -8 19.6 13.98 24 20.4 14.06 accent
+        B ($x1 + 0.3) 20.3 0.65 ($x2 - 0.3) 20.84 2.45 trim @{} @{} @{ axis = 'x'; angle = 22.5; origin = @($midx, 20.32, 1.55) }
+        B ($x1 + 0.5) 20.44 0.75 ($x2 - 0.5) 20.74 1.5 glass @{} @{} @{ axis = 'x'; angle = 22.5; origin = @($midx, 20.32, 1.55) }
+        B ($x1 + 0.82) 20.78 2.0 ($x2 - 0.82) 20.98 2.35 accent
     }
-    B -0.4 19.5 13.9 16.4 24.0 14.06 trim
-    B 0 19.9 13.7 16 23.9 13.9 sign @{ north = 'sign' } @{ north = @(0, 8, 16, 12) }
-    # status light housing under the sign (lens itself is rendered by EGateRenderer)
-    B 4.0 18.5 13.85 12.0 19.9 14.2 trim
-    B 4.24 18.75 13.72 11.76 19.65 13.85 body
 }
 
-function Gate-Cabinet([double]$x1, [double]$x2, [string]$innerFace) {
-    $u = @(0, 0, 16, 16)
-    $ix = if ($innerFace -eq 'east') { $x2 } else { $x1 }
-    $screenOver = @{}
-    $screenOver[$innerFace] = 'screen'
-    $screenUv = @{}
-    $screenUv[$innerFace] = $u
-
-    # plinth, accent band, cabinet body and top cap (waist-high ticket barrier)
-    # Small deliberate gaps keep every relief panel in front of the body
-    # instead of coplanar, which prevents in-game z-fighting/flicker.
-    B $x1 0 1.0 $x2 0.9 15.0 trim
-    B ($x1 - 0.05) 0.92 1.0 ($x2 + 0.05) 1.12 15.0 accent
-    B $x1 1.15 1.2 $x2 14.58 14.8 body2
-    B ($x1 + 0.15) 1.4 0.98 ($x2 - 0.15) 13.6 1.16 body
-    B ($x1 + 0.15) 1.4 14.84 ($x2 - 0.15) 13.6 15.02 body
-    B ($x1 - 0.12) 14.62 1.0 ($x2 + 0.12) 15.8 15.0 body
-    B ($x1 + 0.10) 15.82 1.2 ($x2 - 0.10) 16.0 14.8 body2
-
-    # inner face and angled reader deck (all offsets are outside the body)
-    if ($innerFace -eq 'east') {
-        $panel1 = $x2 + 0.02; $panel2 = $x2 + 0.12
-        $screen1 = $x2 + 0.14; $screen2x = $x2 + 0.26
-        $led1 = $x2 + 0.12; $led2 = $x2 + 0.20
+# One closed door leaf: 6 x 10 px frosted glass panel inside an opaque metal
+# frame (top/bottom rails, outer/inner stiles, mid rail, lock plate and a cyan
+# lock light). Static block-model geometry, so the closed barrier is visible
+# regardless of entity renderer transparency. The OPEN blockstate uses the
+# separate <id>_open model without these leaves.
+function Gate-Leaf([double]$x1, [double]$x2, [bool]$outerLeft) {
+    $glass = @{ north = 'leaf'; south = 'leaf' }
+    # frosted pane (the device glass texture is opaque, so it always shows)
+    B ($x1 + 0.8) 3.8 7.5 ($x2 - 0.8) 12.2 8.5 glass $glass
+    # top / bottom rails
+    B $x1 12.2 7.4 $x2 13 8.6 trim
+    B $x1 3 7.4 $x2 3.8 8.6 trim
+    # outer and inner stiles (the inner pair forms the centre seam)
+    if ($outerLeft) {
+        B $x1 3 7.4 ($x1 + 0.8) 13 8.6 trim
+        B ($x2 - 0.8) 3 7.4 $x2 13 8.6 trim
     } else {
-        $panel1 = $x1 - 0.12; $panel2 = $x1 - 0.02
-        $screen1 = $x1 - 0.26; $screen2x = $x1 - 0.14
-        $led1 = $x1 - 0.20; $led2 = $x1 - 0.12
+        B $x1 3 7.4 ($x1 + 0.8) 13 8.6 trim
+        B ($x2 - 0.8) 3 7.4 $x2 13 8.6 trim
     }
-    B $panel1 1.4 1.4 $panel2 14.2 14.6 body
-    B $screen1 9.2 3.2 $screen2x 13.2 7.0 screen $screenOver $screenUv
-    B $led1 14.1 2.0 $led2 14.55 13.8 led
-    $readerRot = @{ axis = 'x'; angle = 22.5; origin = @((($x1 + $x2) / 2), 16.0, 4.0) }
-    B ($x1 + 0.35) 16.02 2.2 ($x2 - 0.35) 16.42 5.4 body2 @{} @{} $readerRot
-    B ($x1 + 0.55) 16.44 2.5 ($x2 - 0.55) 16.55 4.7 trim @{} @{} $readerRot
-    B ($x1 + 0.80) 16.56 2.9 ($x2 - 0.80) 16.64 4.2 screen2 @{ up = 'screen2' } @{ up = $u } $readerRot
+    # mid rail
+    B ($x1 + 0.8) 7.4 7.42 ($x2 - 0.8) 8.2 8.58 trim
+    # lock plate on the leading edge + cyan lock light
+    $lx = if ($outerLeft) { $x2 - 1.8 } else { $x1 + 0.6 }
+    B $lx 4.4 7.36 ($lx + 1.2) 6.4 8.64 trim
+    B ($lx + 0.3) 4.7 7.28 ($lx + 0.9) 5.9 7.36 cyan
+}
 
-    # front status sign (ENTRY / EXIT)
-    B ($x1 + 0.4) 7.0 0.82 ($x2 - 0.4) 11.0 0.96 sign @{ north = 'sign' } @{ north = @(0, 8, 16, 12) }
-    # back service panel and vents, offset behind the back panel
-    B ($x1 + 0.25) 2.0 15.04 ($x2 - 0.25) 12.0 15.10 trim
-    for ($v = 0; $v -lt 4; $v++) {
-        B ($x1 + 0.55) (3.0 + $v * 1.6) 15.12 ($x2 - 0.55) (3.35 + $v * 1.6) 15.18 body
+function Build-EGate([bool]$open = $false) {
+    # entry gate: identity camera bars, cyan inbound floor guide
+    Gate-Pillar -2 2 $true $true
+    Gate-Pillar 14 18 $false $true
+    # door floor track (all below y 0.4, so the 12 px passage stays clear)
+    B 2.0 0 6.85 14.0 0.12 9.15 trim
+    B 2.2 0.12 7.45 13.8 0.19 7.6 body2
+    B 2.2 0.12 8.4 13.8 0.19 8.55 body2
+    B 2.8 0.12 7.72 13.2 0.19 8.28 accent
+    # inbound cyan guide chevrons leading to the closed leaves
+    B 4.6 0.12 2.5 11.4 0.19 3.3 cyan
+    B 5.0 0.12 3.7 11.0 0.19 4.5 cyan
+    B 5.4 0.12 4.9 10.6 0.19 5.7 cyan
+    B 5.8 0.12 6.0 10.2 0.19 6.6 cyan
+    # entry-only green touchdown line at the approach
+    B 3.2 0.12 1.25 12.8 0.19 1.65 led
+    if (-not $open) {
+        Gate-Leaf 2 8 $true
+        Gate-Leaf 8 14 $false
     }
 }
 
-function Build-EGate {
-    # 20 px wide gate: two 4 px cabinets with a 12 px passage.  The controller
-    # block still owns the passage/collision, while the cabinets straddle the
-    # block edges like a typical ticket-barrier lane.
-    Gate-Cabinet -2 2 'east'
-    Gate-Cabinet 14 18 'west'
-    # floor threshold and inbound chevrons
-    B 2.2 0 7.2 13.8 0.10 8.8 trim
-    B 3.2 0.12 7.35 5.2 0.18 8.65 accent
-    B 5.6 0.12 7.35 7.6 0.18 8.65 accent
-    B 8.0 0.12 7.35 10.0 0.18 8.65 accent
-    B 10.4 0.12 7.35 12.4 0.18 8.65 accent
-    # entry-only floor guide lights (the hood was removed: it overlapped the reader)
-    B 4.0 0.12 2.0 12.0 0.18 2.4 led
+function Build-ExitGate([bool]$open = $false) {
+    # exit gate: angled scan wedges, amber outbound floor guide
+    Gate-Pillar -2 2 $true $false
+    Gate-Pillar 14 18 $false $false
+    # door floor track
+    B 2.0 0 6.85 14.0 0.12 9.15 trim
+    B 2.2 0.12 7.45 13.8 0.19 7.6 body2
+    B 2.2 0.12 8.4 13.8 0.19 8.55 body2
+    B 2.8 0.12 7.72 13.2 0.19 8.28 accent
+    # outbound warning chevrons and a stop bar on the far side
+    B 4.6 0.12 10.0 11.4 0.19 10.8 warning
+    B 5.0 0.12 11.2 11.0 0.19 12.0 warning
+    B 5.4 0.12 12.4 10.6 0.19 13.2 warning
+    B 3.0 0.12 13.45 13.0 0.19 13.85 accent
+    B 3.4 0.12 14.0 12.6 0.19 14.3 led
+    if (-not $open) {
+        Gate-Leaf 2 8 $true
+        Gate-Leaf 8 14 $false
+    }
 }
-
-function Build-ExitGate {
-    Gate-Cabinet -2 2 'east'
-    Gate-Cabinet 14 18 'west'
-    # floor threshold and outbound chevrons
-    B 2.2 0 7.2 13.8 0.10 8.8 trim
-    B 3.2 0.12 7.35 5.2 0.18 8.65 warning
-    B 5.6 0.12 7.35 7.6 0.18 8.65 warning
-    B 8.0 0.12 7.35 10.0 0.18 8.65 warning
-    B 10.4 0.12 7.35 12.4 0.18 8.65 warning
-    # exit-only outbound warning plate on the floor (the beacon was removed:
-    # it occupied the same space as the right reader deck)
-    B 4.0 0.12 13.6 12.0 0.18 14.0 warning
-}
-
 # ================================================== 11c SELF-SERVICE ENDORSEMENT
 # A tall violet self-service kiosk: slim column, cantilevered shelf, big
 # backward-tilted portrait screen, side wings and a status beacon. Its
@@ -1006,6 +970,17 @@ function Build-Blacklist {
 # ------------------------------------------------------------------ writer
 function New-BlockModel($d) {
     $id = $d.id
+    $texNames = @('body', 'body2', 'trim', 'top', 'accent', 'detail', 'led', 'glass', 'paper', 'warning', 'screen', 'screen2')
+    # gates carry four extra slots: the ENTRY / EXIT sign board, the cyan LED
+    # strip, the green direction arrow and the portrait tablet reader UI
+    if ($d.gate) { $texNames += @('sign', 'cyan', 'arrow', 'tablet', 'leaf') }
+    $texJson = [System.Collections.Generic.List[string]]::new()
+    $texJson.Add('"particle":"veriborder:block/' + $id + '_body"') | Out-Null
+    foreach ($t in $texNames) {
+        $texJson.Add('"' + $t + '":"veriborder:block/' + $id + '_' + $t + '"') | Out-Null
+    }
+    $texBlock = '"textures":{' + ($texJson -join ',') + '}'
+
     $script:ELS.Clear()
     switch ($id) {
         'id_issuer' { Build-IdIssuer }
@@ -1018,8 +993,8 @@ function New-BlockModel($d) {
         'manual_terminal' { Build-ManualTerminal }
         'airport_checkin' { Build-AirportCheckin }
         'station_verifier' { Build-StationVerifier }
-        'egate' { Build-EGate }
-        'exit_gate' { Build-ExitGate }
+        'egate' { Build-EGate $false }
+        'exit_gate' { Build-ExitGate $false }
         'self_endorsement' { Build-SelfEndorsement }
         'self_visa' { Build-SelfVisa }
         'entry_stamp' { Build-EntryStamp }
@@ -1031,14 +1006,15 @@ function New-BlockModel($d) {
         'blacklist_terminal' { Build-Blacklist }
         default { throw "No model builder for $id" }
     }
-    $texNames = @('body', 'body2', 'trim', 'top', 'accent', 'detail', 'led', 'glass', 'paper', 'warning', 'screen', 'screen2')
-    # gates carry an extra ENTRY / EXIT sign board texture
-    if ($d.gate) { $texNames += 'sign' }
-    $texJson = [System.Collections.Generic.List[string]]::new()
-    $texJson.Add('"particle":"veriborder:block/' + $id + '_body"') | Out-Null
-    foreach ($t in $texNames) {
-        $texJson.Add('"' + $t + '":"veriborder:block/' + $id + '_' + $t + '"') | Out-Null
-    }
-    $json = '{"textures":{' + ($texJson -join ',') + '},"elements":[' + ($script:ELS -join ',') + '],' + $script:DISPLAY + '}'
+    $json = '{' + $texBlock + ',"elements":[' + ($script:ELS -join ',') + '],' + $script:DISPLAY + '}'
     [System.IO.File]::WriteAllText((Join-Path $blockModels "$id.json"), $json, $utf8)
+
+    # Gates also ship an OPEN variant (blockstate open=true): identical shell,
+    # no door leaves. Both variants share the same textures.
+    if ($d.gate) {
+        $script:ELS.Clear()
+        if ($id -eq 'egate') { Build-EGate $true } else { Build-ExitGate $true }
+        $openJson = '{' + $texBlock + ',"elements":[' + ($script:ELS -join ',') + '],' + $script:DISPLAY + '}'
+        [System.IO.File]::WriteAllText((Join-Path $blockModels "${id}_open.json"), $openJson, $utf8)
+    }
 }

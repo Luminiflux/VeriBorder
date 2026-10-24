@@ -3,6 +3,7 @@ package com.veriborder.block;
 import com.veriborder.doc.CredentialCode;
 import com.veriborder.doc.DocStyle;
 import com.veriborder.doc.EndorsementType;
+import com.veriborder.doc.MrzUtil;
 import com.veriborder.doc.VerificationResult;
 import com.veriborder.doc.VisaType;
 import com.veriborder.registry.ModBlockEntities;
@@ -36,15 +37,20 @@ public class DeviceBlockEntity extends BlockEntity {
         IDLE, VERIFYING, GRANTED, DENIED
     }
 
-    /** Gate modes: all documents, visa code, endorsement code, visa or endorsement code. */
-    public static final String GATE_MODE_ALL = "all";
+    /**
+     * Gate modes (26.3): visa code, endorsement code, or either. The old
+     * {@code all} mode is gone — an entry gate always requires a matching visa,
+     * endorsement or permanent code.
+     */
     public static final String GATE_MODE_VISA = "visa";
     public static final String GATE_MODE_ENDORSEMENT = "endorsement";
     public static final String GATE_MODE_BOTH = "both";
 
-    /** Legacy pre-1.1.5 mode names; {@link #normalizeGateMode(String)} remaps them. */
+    /** Legacy pre-26.3 mode names; {@link #normalizeGateMode(String)} remaps them to {@code both}. */
     @Deprecated
-    public static final String GATE_MODE_ANY = GATE_MODE_ALL;
+    public static final String GATE_MODE_ALL = GATE_MODE_BOTH;
+    @Deprecated
+    public static final String GATE_MODE_ANY = GATE_MODE_BOTH;
     @Deprecated
     public static final String GATE_MODE_PASSPORT = GATE_MODE_VISA;
     @Deprecated
@@ -200,11 +206,39 @@ public class DeviceBlockEntity extends BlockEntity {
     private String officer = "边检警官";
     private String airportCountry = "";
     private final ListTag presets = new ListTag();
+    /**
+     * Dual-clearance gate only: the two-stage configuration applied by
+     * {@code DualGateBrushItem} (exit/entry identity, entry mode and both
+     * independent eight-digit code lists: {@code exitCodes} for the exit stage,
+     * {@code entryCodes} for the entry stage). Empty on every other device and on
+     * a freshly placed dual gate, in which case the use logic falls back to the
+     * gate's own port/country/officer, mode {@code all} and generic gate codes.
+     * Schema: {@code com.veriborder.item.DualGateBrushConfig}.
+     */
+    private CompoundTag dualGate = new CompoundTag();
 
-    /** Gate binding: "all" | "visa" | "endorsement" | "both". */
-    private String gateMode = GATE_MODE_ALL;
+    /** Gate binding: "visa" | "endorsement" | "both" (26.3; {@code all} is gone). */
+    private String gateMode = GATE_MODE_BOTH;
     /** Eight-digit codes accepted by this gate (no limit, deduplicated, order kept). */
     private final ListTag gateCodes = new ListTag();
+    /**
+     * Exit gate only: dedicated eight-digit exit codes enforced on departure.
+     * Empty falls back to {@link #gateCodes}, so an existing gate keeps working
+     * before an administrator configures a dedicated exit list.
+     */
+    private final ListTag exitCodes = new ListTag();
+    /**
+     * Entry-stage whitelist of allowed issuing-country codes ("允许国家/地区码"):
+     * a document whose {@code issuerCountry} matches one of them is a visa-free
+     * pass (the old permanent-code slot) and needs no visa/endorsement code.
+     */
+    private final ListTag entryCountryCodes = new ListTag();
+    /**
+     * Exit-stage whitelist of allowed issuing-country codes: unlike the entry
+     * stage it is directional — a document issued by an allowed country/region
+     * passes the exit stage directly, without an exit-code match.
+     */
+    private final ListTag exitCountryCodes = new ListTag();
     /**
      * Dormant pre-1.1.5 type requirements. Kept only so old NBT/old config
      * payloads still round-trip; validation never reads them.
@@ -219,6 +253,12 @@ public class DeviceBlockEntity extends BlockEntity {
     /** Locked document layout (DocStyle id); applied only when the kind matches. */
     private boolean lockStyle;
     private String lockedStyle = "";
+    /**
+     * 26.4: registry template the locked layout came from ("" for a plain
+     * official layout). Kept next to {@link #lockedStyle} so issuing can carry
+     * the template's colour/icon; a deleted template is simply ignored.
+     */
+    private String lockedStyleTemplate = "";
     /** Locked place of issue for documents / country for visas. */
     private boolean lockPlace;
     private String lockedPlace = "";
@@ -261,6 +301,37 @@ public class DeviceBlockEntity extends BlockEntity {
     private boolean lockEndorsementCode;
     private String lockedEndorsementCode = "";
 
+    // ---- 26.2 issuer policy (device-side, configured through the brush GUI) ----
+    // These used to live on the applicant-facing IssuerScreen; they are now
+    // administrator configuration stored on the block entity.
+    /** Keep the document number system-generated (the form number is ignored). */
+    private boolean lockNumber = true;
+    /**
+     * Force the holder nationality of every document this issuer creates. The
+     * locked value is applied server-side on issue (see
+     * {@code DeviceService#issueDocument}) and the applicant form field becomes
+     * read-only while it is set. Independent of the legacy {@link Locks} record.
+     */
+    private boolean lockNationality;
+    /** Locked holder nationality: trimmed, at most {@link #MAX_NATIONALITY_LENGTH} chars. */
+    private String lockedNationality = "";
+    /** CN_ID six-digit region override; blank uses the layout number prefix. */
+    private String numberRegion = "";
+    /** CN_ID two-digit sequence override; blank generates a random sequence. */
+    private String numberSequence = "";
+    /** Passport MRZ issuing-country override (three letters); blank uses the layout code. */
+    private String mrzCountry = "";
+    /**
+     * 26.3 registry: issuing-country code of this machine (three letters A-Z).
+     * Chosen from the credential registry; it is the single source for the
+     * document {@code issuerCountry} and the passport MRZ code.
+     */
+    private String issuerCountry = "";
+    /** A freshly issued document starts the holder's entry session when possible. */
+    private boolean issueEntryState = true;
+    /** Permanent codes attached to every document this issuer creates (8 digits, deduped). */
+    private final ListTag issueCodes = new ListTag();
+
     /**
      * Gate behaviour: write the IN/OUT immigration stamp automatically when a
      * traveller passes (passport and HK/Macau permit only).
@@ -268,6 +339,10 @@ public class DeviceBlockEntity extends BlockEntity {
     public static final int DEFAULT_OVERSTAY_DAYS = 30;
     /** Upper bound for {@link #overstayDays()} so the day maths never overflows. */
     public static final int MAX_OVERSTAY_DAYS = 3650;
+    /** Upper bound for the locked holder nationality so NBT/config payloads stay bounded. */
+    public static final int MAX_NATIONALITY_LENGTH = 48;
+    /** 26.4: upper bound for the registry template id carried by the layout lock. */
+    public static final int MAX_STYLE_TEMPLATE_LENGTH = 64;
     private boolean autoStamp = true;
     /** Days a traveller may stay before the exit gate reports an overstay. */
     private int overstayDays = DEFAULT_OVERSTAY_DAYS;
@@ -281,6 +356,53 @@ public class DeviceBlockEntity extends BlockEntity {
 
     public DeviceBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.DEVICE.get(), pos, state);
+    }
+
+    /**
+     * Live (chunk-loaded) device block entities of this JVM, weakly referenced so
+     * an unloaded world never keeps a block entity alive. 26.3 round 12 uses this
+     * for the credential-registry reference check: deleting a country/template
+     * that a loaded gate or issuer still references is refused. Devices in
+     * unloaded chunks cannot be inspected without loading them, so the check
+     * covers the loaded world (documented on the registry screen).
+     */
+    private static final java.util.Set<DeviceBlockEntity> LOADED =
+            java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>()));
+
+    @Override
+    public void setLevel(Level level) {
+        super.setLevel(level);
+        if (level != null && !level.isClientSide) {
+            LOADED.add(this);
+        }
+    }
+
+    @Override
+    public void setRemoved() {
+        LOADED.remove(this);
+        super.setRemoved();
+    }
+
+    /** Snapshot of the loaded devices that belong to {@code server} (may be empty). */
+    public static List<DeviceBlockEntity> loadedDevices(@Nullable net.minecraft.server.MinecraftServer server) {
+        List<DeviceBlockEntity> result = new ArrayList<>();
+        if (server == null) {
+            return result;
+        }
+        List<DeviceBlockEntity> snapshot;
+        synchronized (LOADED) {
+            snapshot = new ArrayList<>(LOADED);
+        }
+        for (DeviceBlockEntity device : snapshot) {
+            if (device == null || device.isRemoved()) {
+                continue;
+            }
+            Level level = device.getLevel();
+            if (level != null && level.getServer() == server) {
+                result.add(device);
+            }
+        }
+        return result;
     }
 
     public DeviceType deviceType() {
@@ -404,6 +526,140 @@ public class DeviceBlockEntity extends BlockEntity {
         return CredentialCode.normalizeAll(codes);
     }
 
+    /** The configured exit codes, normalized (valid 8 digits, deduplicated). */
+    public List<String> exitCodes() {
+        return readCodes(exitCodes);
+    }
+
+    /** Copy of the dedicated exit-code list for NBT/config payloads. */
+    public ListTag exitCodesTag() {
+        return copyCodes(exitCodes);
+    }
+
+    public void setExitCodes(ListTag codes) {
+        setExitCodes(readCodes(codes));
+    }
+
+    public void setExitCodes(Collection<String> codes) {
+        writeCodes(exitCodes, codes);
+        changed();
+    }
+
+    /** The entry-stage allowed-country whitelist, normalized to 3-letter codes. */
+    public List<String> entryCountryCodes() {
+        return normalizeCountryCodes(readRawCodes(entryCountryCodes));
+    }
+
+    /** The exit-stage allowed-country whitelist, normalized to 3-letter codes. */
+    public List<String> exitCountryCodes() {
+        return normalizeCountryCodes(readRawCodes(exitCountryCodes));
+    }
+
+    /** Copy of the entry whitelist for NBT/config payloads. */
+    public ListTag entryCountryCodesTag() {
+        return countryCodesTag(entryCountryCodes);
+    }
+
+    /** Copy of the exit whitelist for NBT/config payloads. */
+    public ListTag exitCountryCodesTag() {
+        return countryCodesTag(exitCountryCodes);
+    }
+
+    public void setEntryCountryCodes(ListTag codes) {
+        setEntryCountryCodes(readRawCodes(codes));
+    }
+
+    public void setEntryCountryCodes(Collection<String> codes) {
+        writeCountryCodes(entryCountryCodes, codes);
+        changed();
+    }
+
+    public void setExitCountryCodes(ListTag codes) {
+        setExitCountryCodes(readRawCodes(codes));
+    }
+
+    public void setExitCountryCodes(Collection<String> codes) {
+        writeCountryCodes(exitCountryCodes, codes);
+        changed();
+    }
+
+    private static ListTag countryCodesTag(ListTag source) {
+        ListTag copy = new ListTag();
+        for (String code : normalizeCountryCodes(readRawCodes(source))) {
+            copy.add(StringTag.valueOf(code));
+        }
+        return copy;
+    }
+
+    private static void writeCountryCodes(ListTag target, Collection<String> codes) {
+        target.clear();
+        for (String code : normalizeCountryCodes(codes)) {
+            target.add(StringTag.valueOf(code));
+        }
+    }
+
+    /** Normalizes a country-code collection to three-letter A-Z codes. */
+    private static List<String> normalizeCountryCodes(Collection<String> codes) {
+        List<String> normalized = new ArrayList<>();
+        if (codes == null) {
+            return normalized;
+        }
+        for (String code : codes) {
+            String cleaned = MrzUtil.countryCode(code);
+            if (!cleaned.isEmpty() && !normalized.contains(cleaned)) {
+                normalized.add(cleaned);
+            }
+        }
+        return normalized;
+    }
+
+    private static List<String> readCodes(ListTag list) {
+        List<String> values = new ArrayList<>(list.size());
+        for (int i = 0; i < list.size(); i++) {
+            values.add(list.getString(i));
+        }
+        return CredentialCode.normalizeAll(values);
+    }
+
+    /** Raw string values of a code list (used for 3-letter country codes). */
+    private static List<String> readRawCodes(ListTag list) {
+        List<String> values = new ArrayList<>(list.size());
+        for (int i = 0; i < list.size(); i++) {
+            values.add(list.getString(i));
+        }
+        return values;
+    }
+
+    private static ListTag copyCodes(ListTag list) {
+        ListTag copy = new ListTag();
+        for (String code : readCodes(list)) {
+            copy.add(StringTag.valueOf(code));
+        }
+        return copy;
+    }
+
+    private static void writeCodes(ListTag target, Collection<String> codes) {
+        List<String> normalized = CredentialCode.normalizeAll(codes);
+        target.clear();
+        for (String code : normalized) {
+            target.add(StringTag.valueOf(code));
+        }
+    }
+
+    /** Copy of the dual-clearance gate configuration (empty when unconfigured). */
+    public CompoundTag dualGateConfig() {
+        return dualGate.copy();
+    }
+
+    /**
+     * Replaces the dual-clearance gate configuration. The caller
+     * ({@code DualGateBrushConfig#applyTo}) is responsible for sanitising it.
+     */
+    public void setDualGateConfig(CompoundTag value) {
+        dualGate = value == null ? new CompoundTag() : value.copy();
+        changed();
+    }
+
     /** Whether this gate stamps IN/OUT automatically for passport/permit holders. */
     public boolean autoStamp() {
         return autoStamp;
@@ -489,12 +745,83 @@ public class DeviceBlockEntity extends BlockEntity {
         return lockedEndorsementCode;
     }
 
+    /** Whether this issuer keeps the document number system-generated. */
+    public boolean lockNumber() {
+        return lockNumber;
+    }
+
+    /** Whether this issuer forces the holder nationality of its documents. */
+    public boolean lockNationality() {
+        return lockNationality;
+    }
+
+    /** The forced holder nationality; blank means the lock has no effect. */
+    public String lockedNationality() {
+        return lockedNationality;
+    }
+
+    /** CN_ID region override (six digits, blank = layout default). */
+    public String numberRegion() {
+        return numberRegion;
+    }
+
+    /** CN_ID sequence override (two digits, blank = random). */
+    public String numberSequence() {
+        return numberSequence;
+    }
+
+    /** Passport MRZ issuing-country override (three letters, blank = layout default). */
+    public String mrzCountry() {
+        return mrzCountry;
+    }
+
+    /**
+     * 26.3 registry: issuing-country code of this machine. It is the single
+     * source of the document {@code issuerCountry} and of the passport MRZ code.
+     */
+    public String issuerCountry() {
+        return MrzUtil.countryCode(issuerCountry);
+    }
+
+    public void setIssuerCountry(String value) {
+        issuerCountry = MrzUtil.countryCode(value);
+        changed();
+    }
+
+    /** Whether a newly issued document starts the holder's entry session. */
+    public boolean issueEntryState() {
+        return issueEntryState;
+    }
+
+    /** The configured permanent codes, normalized (valid 8 digits, deduplicated). */
+    public List<String> issueCodes() {
+        List<String> values = new ArrayList<>(issueCodes.size());
+        for (int i = 0; i < issueCodes.size(); i++) {
+            values.add(issueCodes.getString(i));
+        }
+        return CredentialCode.normalizeAll(values);
+    }
+
+    /** Copy of the permanent-code list for NBT/config payloads. */
+    public ListTag issueCodesTag() {
+        ListTag copy = new ListTag();
+        for (String code : issueCodes()) {
+            copy.add(StringTag.valueOf(code));
+        }
+        return copy;
+    }
+
     public boolean lockStyle() {
         return lockStyle;
     }
 
     public String lockedStyle() {
         return lockedStyle;
+    }
+
+    /** 26.4: registry template behind the locked layout, or "" for a plain layout. */
+    public String lockedStyleTemplate() {
+        return lockedStyleTemplate;
     }
 
     public boolean lockPlace() {
@@ -600,16 +927,7 @@ public class DeviceBlockEntity extends BlockEntity {
      */
     @Nullable
     public DocStyle lockedStyleOrNull() {
-        String key = lockedStyle.trim();
-        if (key.isEmpty()) {
-            return null;
-        }
-        for (DocStyle candidate : DocStyle.values()) {
-            if (candidate.id().equalsIgnoreCase(key)) {
-                return candidate;
-            }
-        }
-        return null;
+        return DocStyle.byIdOrNull(lockedStyle);
     }
 
     /**
@@ -635,9 +953,41 @@ public class DeviceBlockEntity extends BlockEntity {
         changed();
     }
 
+    /**
+     * 26.4 fix: stores only a real official layout id. The layout lock is written
+     * from a dropdown that may still carry a {@code template:<id>} value; an
+     * unusable value becomes "" (the layout lock then falls back to the submitted
+     * layout) instead of reaching the issuing path as an unparsable string.
+     */
     public void setLockedStyle(String value) {
-        lockedStyle = value == null ? "" : value.trim();
+        lockedStyle = normalizeLockedStyle(value);
+        if (lockedStyle.isEmpty()) {
+            lockedStyleTemplate = "";
+        }
         changed();
+    }
+
+    /** 26.4: registry template of the locked layout (ignored without a locked layout). */
+    public void setLockedStyleTemplate(String value) {
+        String template = normalizeLockedStyleTemplate(value);
+        lockedStyleTemplate = lockedStyle.isEmpty() ? "" : template;
+        changed();
+    }
+
+    /** Canonical official layout id, or "" when {@code value} is not one. */
+    public static String normalizeLockedStyle(String value) {
+        DocStyle style = DocStyle.byIdOrNull(value);
+        return style == null ? "" : style.id();
+    }
+
+    /** Trimmed, length-capped registry template id ("" when unset). */
+    public static String normalizeLockedStyleTemplate(String value) {
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value.trim();
+        return cleaned.length() > MAX_STYLE_TEMPLATE_LENGTH
+                ? cleaned.substring(0, MAX_STYLE_TEMPLATE_LENGTH) : cleaned;
     }
 
     public void setLockPlace(boolean value) {
@@ -777,6 +1127,60 @@ public class DeviceBlockEntity extends BlockEntity {
         changed();
     }
 
+    public void setLockNumber(boolean value) {
+        lockNumber = value;
+        changed();
+    }
+
+    public void setLockNationality(boolean value) {
+        lockNationality = value;
+        changed();
+    }
+
+    public void setLockedNationality(String value) {
+        lockedNationality = normalizeNationality(value);
+        changed();
+    }
+
+    public void setNumberRegion(String value) {
+        numberRegion = normalizeRegion(value);
+        changed();
+    }
+
+    public void setNumberSequence(String value) {
+        numberSequence = normalizeSequence(value);
+        changed();
+    }
+
+    public void setMrzCountry(String value) {
+        mrzCountry = normalizeMrzCountry(value);
+        changed();
+    }
+
+    public void setIssueEntryState(boolean value) {
+        issueEntryState = value;
+        changed();
+    }
+
+    public void setIssueCodes(ListTag codes) {
+        List<String> values = new ArrayList<>();
+        if (codes != null) {
+            for (int i = 0; i < codes.size(); i++) {
+                values.add(codes.getString(i));
+            }
+        }
+        setIssueCodes(values);
+    }
+
+    public void setIssueCodes(Collection<String> codes) {
+        List<String> normalized = CredentialCode.normalizeAll(codes);
+        issueCodes.clear();
+        for (String code : normalized) {
+            issueCodes.add(StringTag.valueOf(code));
+        }
+        changed();
+    }
+
     /** The full lock configuration (also used for NBT round-trip tests). */
     public Locks locks() {
         return new Locks(lockDocumentName, lockedDocumentName, lockAuthority, lockedAuthority,
@@ -808,16 +1212,20 @@ public class DeviceBlockEntity extends BlockEntity {
         changed();
     }
 
+    /**
+     * Canonical gate mode (26.3). The removed {@code all} mode, {@code any}, a
+     * blank value, an unknown value and {@code null} all become
+     * {@link #GATE_MODE_BOTH}, so a device saved by an older build (or a forged
+     * config payload) can never re-enable the "accept any document" behaviour.
+     */
     public static String normalizeGateMode(String value) {
         if (value == null) {
-            return GATE_MODE_ALL;
+            return GATE_MODE_BOTH;
         }
         return switch (value.trim().toLowerCase(Locale.ROOT)) {
             case GATE_MODE_VISA, "passport" -> GATE_MODE_VISA;
             case GATE_MODE_ENDORSEMENT, "permit" -> GATE_MODE_ENDORSEMENT;
-            case GATE_MODE_BOTH -> GATE_MODE_BOTH;
-            case GATE_MODE_ALL, "any" -> GATE_MODE_ALL;
-            default -> GATE_MODE_ALL;
+            default -> GATE_MODE_BOTH;
         };
     }
 
@@ -912,10 +1320,11 @@ public class DeviceBlockEntity extends BlockEntity {
         float speed = openState ? 0.09F : 0.065F;
         float value = openProgress;
         if (value < target) {
-            value = Math.min(target, value + speed * partialTick);
+            value = Math.min(target, value + speed);
         } else if (value > target) {
-            value = Math.max(target, value - speed * partialTick);
+            value = Math.max(target, value - speed);
         }
+        openProgress = value;
         return value;
     }
 
@@ -932,12 +1341,9 @@ public class DeviceBlockEntity extends BlockEntity {
         gateMessage = "gate.veriborder.verifying";
         changed();
         sync();
-        level.playSound(null, worldPosition, SoundEvents.BEACON_ACTIVATE, SoundSource.BLOCKS, 0.45F, 1.6F);
-        if (level instanceof ServerLevel serverLevel) {
-            Vec3 front = front();
-            serverLevel.sendParticles(ParticleTypes.ELECTRIC_SPARK, front.x, front.y + 0.65, front.z,
-                    10, 0.22, 0.35, 0.22, 0.015);
-        }
+        // Short mechanical read-head click while the document is checked; no
+        // beacon/anvil fanfare and no particle burst for a gate.
+        level.playSound(null, worldPosition, SoundEvents.LEVER_CLICK, SoundSource.BLOCKS, 0.45F, 1.45F);
         return true;
     }
 
@@ -953,19 +1359,12 @@ public class DeviceBlockEntity extends BlockEntity {
         stateTicks = passed ? 110 : 70;
         gateMessage = passed ? "gate.veriborder.granted" : "gate.veriborder.denied";
         if (level instanceof ServerLevel serverLevel) {
-            Vec3 front = front();
-            if (passed) {
-                serverLevel.playSound(null, worldPosition, SoundEvents.PISTON_EXTEND, SoundSource.BLOCKS, 1.0F, 0.85F);
-                serverLevel.playSound(null, worldPosition, SoundEvents.BEACON_ACTIVATE, SoundSource.BLOCKS, 0.8F, 1.35F);
-                serverLevel.sendParticles(ParticleTypes.HAPPY_VILLAGER, front.x, front.y + 0.6, front.z,
-                        22, 0.4, 0.5, 0.4, 0.02);
-                serverLevel.sendParticles(ParticleTypes.END_ROD, front.x, front.y + 0.6, front.z,
-                        14, 0.25, 0.4, 0.25, 0.03);
-            } else {
-                serverLevel.playSound(null, worldPosition, SoundEvents.ANVIL_LAND, SoundSource.BLOCKS, 0.9F, 0.55F);
-                serverLevel.playSound(null, worldPosition, SoundEvents.VILLAGER_NO, SoundSource.BLOCKS, 0.8F, 0.8F);
-                serverLevel.sendParticles(ParticleTypes.SMOKE, front.x, front.y + 0.6, front.z,
-                        24, 0.35, 0.45, 0.35, 0.02);
+            // No pass/fail particle burst: the door movement, the status lens and
+            // the buzzer carry the feedback. The open/close servo sound is played
+            // by setOpen() so every door movement is heard exactly once.
+            if (!passed) {
+                serverLevel.playSound(null, worldPosition, SoundEvents.NOTE_BLOCK_BASS.value(), SoundSource.BLOCKS,
+                        0.85F, 0.62F);
             }
             if (pendingPlayer != null) {
                 ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(pendingPlayer);
@@ -1017,6 +1416,21 @@ public class DeviceBlockEntity extends BlockEntity {
         BlockState state = getBlockState();
         if (state.hasProperty(EGateBlock.OPEN) && state.getValue(EGateBlock.OPEN) != open) {
             level.setBlock(worldPosition, state.setValue(EGateBlock.OPEN, open), 3);
+            playGateSound(open);
+        }
+    }
+
+    /**
+     * Mechanical gate audio. Open = one short servo extension; close = the servo
+     * retracting plus a soft latch; both are pitched up a little so they read as
+     * a motor rather than a wooden piston.
+     */
+    private void playGateSound(boolean open) {
+        if (open) {
+            level.playSound(null, worldPosition, SoundEvents.PISTON_EXTEND, SoundSource.BLOCKS, 0.55F, 1.55F);
+        } else {
+            level.playSound(null, worldPosition, SoundEvents.PISTON_CONTRACT, SoundSource.BLOCKS, 0.5F, 1.45F);
+            level.playSound(null, worldPosition, SoundEvents.IRON_TRAPDOOR_CLOSE, SoundSource.BLOCKS, 0.35F, 1.35F);
         }
     }
 
@@ -1059,12 +1473,19 @@ public class DeviceBlockEntity extends BlockEntity {
     @Override
     public void load(CompoundTag tag) {
         super.load(tag);
+        // 26.3 schema upgrade: legacy gate-mode names, missing defaults and the
+        // old single-string code list are migrated once, then stamped. Idempotent.
+        DeviceSchema.migrate(tag);
         port = tag.contains("port") ? tag.getString("port") : port;
         country = tag.contains("country") ? tag.getString("country") : country;
         officer = tag.contains("officer") ? tag.getString("officer") : officer;
         airportCountry = tag.getString("airportCountry");
+        dualGate = tag.getCompound("dualGate").copy();
         gateMode = normalizeGateMode(tag.getString("gateMode"));
         loadGateCodes(tag.getList("gateCodes", Tag.TAG_STRING));
+        loadCodes(exitCodes, tag.getList("exitCodes", Tag.TAG_STRING));
+        loadCodes(entryCountryCodes, tag.getList("entryCountryCodes", Tag.TAG_STRING));
+        loadCodes(exitCountryCodes, tag.getList("exitCountryCodes", Tag.TAG_STRING));
         autoStamp = !tag.contains("autoStamp") || tag.getBoolean("autoStamp");
         overstayDays = clampOverstay(tag.contains("overstayDays")
                 ? tag.getInt("overstayDays") : DEFAULT_OVERSTAY_DAYS);
@@ -1076,6 +1497,7 @@ public class DeviceBlockEntity extends BlockEntity {
         lockEndorsementCode = tag.getBoolean("lockEndorsementCode");
         String loadedEndorsementCode = tag.getString("lockedEndorsementCode").trim();
         lockedEndorsementCode = CredentialCode.isValid(loadedEndorsementCode) ? loadedEndorsementCode : "";
+        applyConfigTag(tag);
         if (tag.contains("presets", Tag.TAG_LIST)) {
             presets.clear();
             ListTag loaded = tag.getList("presets", Tag.TAG_COMPOUND);
@@ -1100,6 +1522,86 @@ public class DeviceBlockEntity extends BlockEntity {
         }
     }
 
+    /** Loads one normalised code list into an existing list tag. */
+    private static void loadCodes(ListTag target, ListTag loaded) {
+        List<String> values = new ArrayList<>();
+        for (int i = 0; i < loaded.size(); i++) {
+            values.add(loaded.getString(i));
+        }
+        writeCodes(target, values);
+    }
+
+    /**
+     * Applies the 26.2 issuer-policy keys carried by NBT ({@link #load}) and by the
+     * block-entity sync packet ({@link #handleUpdateTag}). Absent keys keep the
+     * historical defaults ({@code lockNumber} and {@code issueEntryState} on), so
+     * a pre-26.2 device upgrades without changing behaviour. The {@code configTag}
+     * written by this class is the authoritative payload of the brush GUI.
+     */
+    public void applyConfigTag(CompoundTag tag) {
+        if (tag == null) {
+            return;
+        }
+        lockNumber = !tag.contains("lockNumber") || tag.getBoolean("lockNumber");
+        // 26.2 nationality lock. Absent keys keep the historical default (off and
+        // blank), so a device saved by an older build upgrades without a lock.
+        lockNationality = tag.contains("lockNationality") && tag.getBoolean("lockNationality");
+        lockedNationality = normalizeNationality(tag.getString("lockedNationality"));
+        numberRegion = normalizeRegion(tag.getString("numberRegion"));
+        numberSequence = normalizeSequence(tag.getString("numberSequence"));
+        mrzCountry = normalizeMrzCountry(tag.getString("mrzCountry"));
+        issuerCountry = MrzUtil.countryCode(tag.getString("issuerCountry"));
+        issueEntryState = !tag.contains("issueEntryState") || tag.getBoolean("issueEntryState");
+        loadIssueCodes(tag.getList("issueCodes", Tag.TAG_STRING));
+    }
+
+    private void loadIssueCodes(ListTag loaded) {
+        List<String> values = new ArrayList<>();
+        for (int i = 0; i < loaded.size(); i++) {
+            values.add(loaded.getString(i));
+        }
+        List<String> normalized = CredentialCode.normalizeAll(values);
+        issueCodes.clear();
+        for (String code : normalized) {
+            issueCodes.add(StringTag.valueOf(code));
+        }
+    }
+
+    /** CN_ID region: digits only, at most six. Blank is meaningful (layout default). */
+    private static String normalizeRegion(String value) {
+        String digits = value == null ? "" : value.replaceAll("[^0-9]", "");
+        return digits.length() > 6 ? digits.substring(0, 6) : digits;
+    }
+
+    /** CN_ID sequence: digits only, at most two (the last two win, like the generator). */
+    private static String normalizeSequence(String value) {
+        String digits = value == null ? "" : value.replaceAll("[^0-9]", "");
+        return digits.length() > 2 ? digits.substring(digits.length() - 2) : digits;
+    }
+
+    /** MRZ country: exactly three letters, upper-cased; anything else means "layout default". */
+    private static String normalizeMrzCountry(String value) {
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value.toUpperCase(Locale.ROOT).replaceAll("[^A-Z]", "");
+        return cleaned.length() == 3 ? cleaned : "";
+    }
+
+    /**
+     * Locked nationality: trimmed (matching the {@link Locks} normalization) and
+     * capped at {@link #MAX_NATIONALITY_LENGTH} characters so an oversized config
+     * payload can never grow the block-entity NBT without bound.
+     */
+    private static String normalizeNationality(String value) {
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value.trim();
+        return cleaned.length() > MAX_NATIONALITY_LENGTH
+                ? cleaned.substring(0, MAX_NATIONALITY_LENGTH) : cleaned;
+    }
+
     private void applyLocks(CompoundTag tag) {
         Locks loaded = Locks.fromTag(tag);
         lockDocumentName = loaded.lockDocumentName();
@@ -1107,7 +1609,7 @@ public class DeviceBlockEntity extends BlockEntity {
         lockAuthority = loaded.lockAuthority();
         lockedAuthority = loaded.lockedAuthority();
         lockStyle = loaded.lockStyle();
-        lockedStyle = loaded.lockedStyle();
+        lockedStyle = normalizeLockedStyle(loaded.lockedStyle());
         lockPlace = loaded.lockPlace();
         lockedPlace = loaded.lockedPlace();
         lockIssueDate = loaded.lockIssueDate();
@@ -1132,17 +1634,39 @@ public class DeviceBlockEntity extends BlockEntity {
         lockedVisaValidityYears = loaded.lockedVisaValidityYears();
         lockVisaName = loaded.lockVisaName();
         lockedVisaName = loaded.lockedVisaName();
+        lockedStyleTemplate = lockedStyle.isEmpty()
+                ? "" : normalizeLockedStyleTemplate(tag.getString("lockedStyleTemplate"));
+    }
+
+    /** Writes the 26.2 issuer policy to NBT, the sync tag and the config payload. */
+    private void writeIssuerPolicy(CompoundTag tag) {
+        tag.putBoolean("lockNumber", lockNumber);
+        tag.putBoolean("lockNationality", lockNationality);
+        tag.putString("lockedNationality", lockedNationality);
+        // 26.4: registry template behind the locked layout (empty for a plain one).
+        tag.putString("lockedStyleTemplate", lockedStyleTemplate);
+        tag.putString("numberRegion", numberRegion);
+        tag.putString("numberSequence", numberSequence);
+        tag.putString("mrzCountry", mrzCountry);
+        tag.putString("issuerCountry", issuerCountry);
+        tag.putBoolean("issueEntryState", issueEntryState);
+        tag.put("issueCodes", issueCodesTag());
     }
 
     @Override
     protected void saveAdditional(CompoundTag tag) {
         super.saveAdditional(tag);
+        tag.putInt(DeviceSchema.SCHEMA_KEY, DeviceSchema.CURRENT);
         tag.putString("port", port);
         tag.putString("country", country);
         tag.putString("officer", officer);
         tag.putString("airportCountry", airportCountry);
+        tag.put("dualGate", dualGate.copy());
         tag.putString("gateMode", gateMode);
         tag.put("gateCodes", gateCodesTag());
+        tag.put("exitCodes", exitCodesTag());
+        tag.put("entryCountryCodes", entryCountryCodesTag());
+        tag.put("exitCountryCodes", exitCountryCodesTag());
         tag.putBoolean("autoStamp", autoStamp);
         tag.putInt("overstayDays", overstayDays);
         tag.putString("requiredVisaType", requiredVisaType);
@@ -1151,6 +1675,7 @@ public class DeviceBlockEntity extends BlockEntity {
         tag.putString("issuedCode", issuedCode);
         tag.putBoolean("lockEndorsementCode", lockEndorsementCode);
         tag.putString("lockedEndorsementCode", lockedEndorsementCode);
+        writeIssuerPolicy(tag);
         tag.put("presets", presets.copy());
         tag.putString("gateState", GateState.IDLE.name());
     }
@@ -1162,8 +1687,12 @@ public class DeviceBlockEntity extends BlockEntity {
         tag.putString("country", country);
         tag.putString("officer", officer);
         tag.putString("airportCountry", airportCountry);
+        tag.put("dualGate", dualGate.copy());
         tag.putString("gateMode", gateMode);
         tag.put("gateCodes", gateCodesTag());
+        tag.put("exitCodes", exitCodesTag());
+        tag.put("entryCountryCodes", entryCountryCodesTag());
+        tag.put("exitCountryCodes", exitCountryCodesTag());
         tag.putBoolean("autoStamp", autoStamp);
         tag.putInt("overstayDays", overstayDays);
         tag.putString("requiredVisaType", requiredVisaType);
@@ -1172,6 +1701,7 @@ public class DeviceBlockEntity extends BlockEntity {
         tag.putString("issuedCode", issuedCode);
         tag.putBoolean("lockEndorsementCode", lockEndorsementCode);
         tag.putString("lockedEndorsementCode", lockedEndorsementCode);
+        writeIssuerPolicy(tag);
         tag.putString("gateState", gateState.name());
         tag.putFloat("openProgress", openProgress);
         tag.putString("gateMessage", gateMessage);
@@ -1184,8 +1714,12 @@ public class DeviceBlockEntity extends BlockEntity {
         country = tag.contains("country") ? tag.getString("country") : country;
         officer = tag.contains("officer") ? tag.getString("officer") : officer;
         airportCountry = tag.getString("airportCountry");
+        dualGate = tag.getCompound("dualGate").copy();
         gateMode = normalizeGateMode(tag.getString("gateMode"));
         loadGateCodes(tag.getList("gateCodes", Tag.TAG_STRING));
+        loadCodes(exitCodes, tag.getList("exitCodes", Tag.TAG_STRING));
+        loadCodes(entryCountryCodes, tag.getList("entryCountryCodes", Tag.TAG_STRING));
+        loadCodes(exitCountryCodes, tag.getList("exitCountryCodes", Tag.TAG_STRING));
         autoStamp = !tag.contains("autoStamp") || tag.getBoolean("autoStamp");
         overstayDays = clampOverstay(tag.contains("overstayDays")
                 ? tag.getInt("overstayDays") : DEFAULT_OVERSTAY_DAYS);
@@ -1197,6 +1731,7 @@ public class DeviceBlockEntity extends BlockEntity {
         lockEndorsementCode = tag.getBoolean("lockEndorsementCode");
         String loadedEndorsementCode = tag.getString("lockedEndorsementCode").trim();
         lockedEndorsementCode = CredentialCode.isValid(loadedEndorsementCode) ? loadedEndorsementCode : "";
+        applyConfigTag(tag);
         try {
             gateState = GateState.valueOf(tag.getString("gateState"));
         } catch (IllegalArgumentException exception) {
@@ -1218,8 +1753,12 @@ public class DeviceBlockEntity extends BlockEntity {
         tag.putString("country", country);
         tag.putString("officer", officer);
         tag.putString("airportCountry", airportCountry);
+        tag.put("dualGate", dualGate.copy());
         tag.putString("gateMode", gateMode);
         tag.put("gateCodes", gateCodesTag());
+        tag.put("exitCodes", exitCodesTag());
+        tag.put("entryCountryCodes", entryCountryCodesTag());
+        tag.put("exitCountryCodes", exitCountryCodesTag());
         tag.putBoolean("autoStamp", autoStamp);
         tag.putInt("overstayDays", overstayDays);
         tag.putString("requiredVisaType", requiredVisaType);
@@ -1228,6 +1767,7 @@ public class DeviceBlockEntity extends BlockEntity {
         tag.putString("issuedCode", issuedCode);
         tag.putBoolean("lockEndorsementCode", lockEndorsementCode);
         tag.putString("lockedEndorsementCode", lockedEndorsementCode);
+        writeIssuerPolicy(tag);
         tag.put("presets", presets());
         tag.putString("gateState", gateState.name());
         tag.putString("gateMessage", gateMessage);

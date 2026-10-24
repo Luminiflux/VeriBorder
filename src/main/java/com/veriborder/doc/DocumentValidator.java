@@ -8,15 +8,20 @@ import java.util.List;
 import java.util.Locale;
 
 public final class DocumentValidator {
-    /** Gate modes: all documents, visa code, endorsement code, or either code. */
-    public static final String GATE_MODE_ALL = "all";
+    /**
+     * Gate modes (26.3): the {@code all} mode is gone. Every entry gate requires a
+     * matching visa, endorsement or permanent code; legacy {@code all}/{@code any}
+     * values load as {@link #GATE_MODE_BOTH}.
+     */
     public static final String GATE_MODE_VISA = "visa";
     public static final String GATE_MODE_ENDORSEMENT = "endorsement";
     public static final String GATE_MODE_BOTH = "both";
 
-    /** Legacy pre-1.1.5 aliases; accepted by {@link #normalizeMode(String)}. */
+    /** Legacy pre-26.3 aliases; every one of them now normalises to {@code both}. */
     @Deprecated
-    public static final String GATE_MODE_ANY = GATE_MODE_ALL;
+    public static final String GATE_MODE_ALL = GATE_MODE_BOTH;
+    @Deprecated
+    public static final String GATE_MODE_ANY = GATE_MODE_BOTH;
     @Deprecated
     public static final String GATE_MODE_PASSPORT = GATE_MODE_VISA;
     @Deprecated
@@ -28,30 +33,61 @@ public final class DocumentValidator {
     public static final String REASON_REQUIRES_PERMIT = "verify.veriborder.reason.gate_requires_permit";
     public static final String REASON_REQUIRES_VISA_OR_ENDORSEMENT =
             "verify.veriborder.reason.gate_requires_visa_or_endorsement";
+    /**
+     * 26.3 round 12: the document's issuing country is not on the gate's
+     * visa-free whitelist. Kept as an administrator reason code; the traveller
+     * sees “your country is not on the visa-free list”
+     * ({@link TravellerReasons#COUNTRY_NOT_VISA_FREE}).
+     */
+    public static final String REASON_COUNTRY_NOT_VISA_FREE = "verify.veriborder.reason.country_not_visa_free";
 
     private DocumentValidator() {
     }
 
     public static VerificationResult validate(DocumentData doc, DeviceType device, String destination) {
-        return validateCore(doc, device, destination);
+        return validateCore(doc, device, destination, false);
+    }
+
+    /**
+     * Exit-gate validation (26.3): the same structural checks as
+     * {@link #validate} but a document that is merely <em>expired</em> is still
+     * allowed to leave. A traveller whose permit/endorsement ran out while they
+     * were inside the country must never be trapped; the exit is logged as an
+     * OVERSTAY and flagged to the player instead. Lost/cancelled/suspended and
+     * malformed documents are still refused.
+     */
+    public static VerificationResult validateExit(DocumentData doc) {
+        return validateCore(doc, DeviceType.EXIT_GATE, "", true);
     }
 
     /**
      * Gate entry point. Normal document checks always run first; when they pass,
      * the gate mode decides whether the document may pass:
      * <ul>
-     *   <li>{@code all}: any valid document, no code requirement;</li>
-     *   <li>{@code visa}: PASSPORT, an active visa code or a visa-free code must
+     *   <li>{@code visa}: PASSPORT, an active visa code or a permanent code must
      *       exactly equal one of the configured gate codes;</li>
      *   <li>{@code endorsement}: PERMIT, an active endorsement code must match;</li>
      *   <li>{@code both}: either of the above.</li>
      * </ul>
+     * There is no "accept anything" mode: a gate without codes only lets through
+     * a document whose permanent code matches the gate country (returning home /
+     * visa-free), see {@link #matchPermanentCode(DocumentData, String)}.
      * The result detail carries the matched code on success and the required
      * mode on failure.
      */
     public static VerificationResult validateGate(DocumentData doc, DeviceType device, String gateMode,
                                                   List<String> gateCodes) {
-        VerificationResult base = validateCore(doc, device, "");
+        return validateGate(doc, device, gateMode, gateCodes, "");
+    }
+
+    /**
+     * Gate entry point with the gate's country, so permanent codes can be scoped
+     * to the country they were issued for (26.3). An empty country keeps only
+     * universal (legacy) permanent codes valid.
+     */
+    public static VerificationResult validateGate(DocumentData doc, DeviceType device, String gateMode,
+                                                  List<String> gateCodes, String gateCountry) {
+        VerificationResult base = validateCore(doc, device, "", false);
         if (!base.valid()) {
             return base;
         }
@@ -60,8 +96,11 @@ public final class DocumentValidator {
             return base;
         }
         String mode = normalizeMode(gateMode);
-        if (GATE_MODE_ALL.equals(mode)) {
-            return base;
+        // 26.3 permanent-code slot (permit + passport): a code issued for the
+        // gate's country satisfies every checking mode without a code match.
+        String permanent = matchPermanentCode(doc, gateCountry);
+        if (permanent != null) {
+            return VerificationResult.ok(permanent);
         }
         List<String> codes = CredentialCode.normalizeAll(gateCodes);
         if (codes.isEmpty()) {
@@ -92,8 +131,44 @@ public final class DocumentValidator {
                 }
                 yield wrongKind(REASON_REQUIRES_VISA_OR_ENDORSEMENT, mode);
             }
-            default -> base;
+            default -> failNoMatch(mode);
         };
+    }
+
+    /**
+     * The permanent code of {@code doc} that opens a gate in {@code gateCountry},
+     * or {@code null} when none does (26.3 rules):
+     *
+     * <ul>
+     *   <li>legacy code without {@code issuerCountry} — universal, matches every
+     *       gate (26.2 documents keep working);</li>
+     *   <li>{@code return_home} — only when the gate is in the code's own
+     *       country: {@code gateCountry == issuerCountry};</li>
+     *   <li>{@code visa_free} — the destination country must match the code and
+     *       the optional expiry must still be valid;</li>
+     *   <li>a scoped code never matches a gate whose country is unknown.</li>
+     * </ul>
+     */
+    public static String matchPermanentCode(DocumentData doc, String gateCountry) {
+        if (doc == null) {
+            return null;
+        }
+        String gate = gateCountry == null ? "" : gateCountry.trim();
+        for (DocumentData.PermanentCode record : doc.permanentCodes()) {
+            if (!record.hasIssuerCountry()) {
+                return record.code();
+            }
+            if (gate.isEmpty()) {
+                continue;
+            }
+            if (record.purpose() == DocumentData.PermanentPurpose.VISA_FREE && record.expired()) {
+                continue;
+            }
+            if (countryMatches(gate, record.issuerCountry())) {
+                return record.code();
+            }
+        }
+        return null;
     }
 
     /**
@@ -107,7 +182,8 @@ public final class DocumentValidator {
         return validateGate(doc, device, gateMode, List.of());
     }
 
-    private static VerificationResult validateCore(DocumentData doc, DeviceType device, String destination) {
+    private static VerificationResult validateCore(DocumentData doc, DeviceType device, String destination,
+                                                   boolean allowExpired) {
         if (doc == null) {
             return VerificationResult.fail(VerificationResult.Code.NO_DOCUMENT);
         }
@@ -194,7 +270,7 @@ public final class DocumentValidator {
             }
             reasons.add("verify.veriborder.reason.issue_future");
         }
-        if (doc.isExpired()) {
+        if (doc.isExpired() && !allowExpired) {
             if (code == VerificationResult.Code.OK) {
                 code = VerificationResult.Code.EXPIRED;
             }
@@ -275,17 +351,26 @@ public final class DocumentValidator {
         return VerificationResult.fail(VerificationResult.Code.WRONG_KIND, reason).withDetail(mode);
     }
 
-    /** Legacy aliases normalize as any -> all, passport -> visa, permit -> endorsement. */
+    private static VerificationResult failNoMatch(String mode) {
+        return VerificationResult.fail(VerificationResult.Code.NO_MATCHING_CODE, REASON_GATE_CODE_MISMATCH)
+                .withDetail(mode);
+    }
+
+    /**
+     * Canonical gate mode (26.3). {@code visa} / {@code passport} and
+     * {@code endorsement} / {@code permit} keep their aliases; every other value —
+     * including the removed {@code all} mode, {@code any}, a blank and {@code null}
+     * — normalises to {@link #GATE_MODE_BOTH}, so no gate can ever accept a
+     * document without a matching visa, endorsement or permanent code.
+     */
     public static String normalizeMode(String gateMode) {
         if (gateMode == null) {
-            return GATE_MODE_ALL;
+            return GATE_MODE_BOTH;
         }
         return switch (gateMode.trim().toLowerCase(Locale.ROOT)) {
             case GATE_MODE_VISA, "passport" -> GATE_MODE_VISA;
             case GATE_MODE_ENDORSEMENT, "permit" -> GATE_MODE_ENDORSEMENT;
-            case GATE_MODE_BOTH -> GATE_MODE_BOTH;
-            case GATE_MODE_ALL, "any" -> GATE_MODE_ALL;
-            default -> GATE_MODE_ALL;
+            default -> GATE_MODE_BOTH;
         };
     }
 

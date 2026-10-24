@@ -3,6 +3,8 @@ package com.veriborder.client.screen;
 import com.veriborder.client.BetterButton;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
+import com.veriborder.client.ui.ColorPalette;
+import com.veriborder.client.ui.Dropdown;
 import com.veriborder.doc.DateUtil;
 import com.veriborder.doc.DocStyle;
 import com.veriborder.doc.DocumentFactory;
@@ -21,17 +23,14 @@ import java.util.List;
  * from an official layout or from a fully custom cover/layout identity.
  */
 public class GeneratorScreen extends VeriScreen {
-    private static final int[] PALETTE = {
-            0x1F6FB2, 0x7C3AED, 0xB91C1C, 0x0F766E,
-            0xC2410C, 0x374151, 0xA16207, 0x111827
-    };
-
     private DocumentKind kind = DocumentKind.ID_CARD;
     private DocStyle style = DocStyle.CN_ID;
     private boolean custom;
     private String sex = "M";
-    private int paletteIndex;
     private CompoundTag cache;
+    /** 26.3 round 12: the shared palette picker replaces the old hex text box. */
+    private ColorPalette colorPicker;
+    private EditBox colorHex;
 
     private EditBox name;
     private EditBox nameLatin;
@@ -47,10 +46,6 @@ public class GeneratorScreen extends VeriScreen {
     private EditBox customName;
     private EditBox customShort;
     private EditBox customType;
-    private EditBox customColor;
-    private BetterButton sexButton;
-    private BetterButton kindButton;
-    private BetterButton templateButton;
     private BetterButton customButton;
 
     public GeneratorScreen() {
@@ -76,8 +71,10 @@ public class GeneratorScreen extends VeriScreen {
         tag.putString("issueDate", DateUtil.today());
         tag.putString("expiryDate", style.permanent() ? DateUtil.PERMANENT
                 : DateUtil.plusYears(DateUtil.today(), style.validityYears()));
-        tag.putString("customName", style == DocStyle.CN_ID ? "Custom Identity Card" : "Custom Document");
-        tag.putString("customShortName", "CUSTOM");
+        tag.putString("customName", style == DocStyle.CN_ID
+                ? Component.translatable("screen.veriborder.generator.custom_id_name").getString()
+                : Component.translatable("screen.veriborder.generator.custom_doc_name").getString());
+        tag.putString("customShortName", Component.translatable("screen.veriborder.generator.custom_short").getString());
         tag.putString("customType", Component.translatable(kind.translationKey()).getString());
         tag.putInt("customColor", style.accentColor());
         return tag;
@@ -88,20 +85,46 @@ public class GeneratorScreen extends VeriScreen {
         if (cache == null) {
             cache = defaults();
         }
-        kindButton = addRenderableWidget(new BetterButton(left + 24, top + 46, 130, 20,
-                Component.translatable(kind.translationKey()), button -> {
+        // 26.4: credential type, layout and sex are real dropdowns instead of
+        // three cycle buttons (passports alone offer five layouts).
+        List<Dropdown.Option> kinds = new java.util.ArrayList<>();
+        for (DocumentKind value : DocumentKind.values()) {
+            kinds.add(new Dropdown.Option(value.id(),
+                    Component.translatable(value.translationKey()).getString()));
+        }
+        addDropdown(Dropdown.at(left + 24, top + 46, 130)
+                .options(kinds)
+                .selected(kind.id())
+                .onChange(id -> {
+                    if (kind.id().equals(id)) {
+                        return;
+                    }
                     capture();
-                    DocumentKind[] kinds = DocumentKind.values();
-                    kind = kinds[(kind.ordinal() + 1) % kinds.length];
-                    List<DocStyle> styles = DocStyle.forKind(kind);
-                    style = styles.get(0);
+                    DocumentKind next = DocumentKind.byIdOrNull(id);
+                    if (next == null) {
+                        return;
+                    }
+                    kind = next;
+                    style = DocStyle.forKind(kind).get(0);
                     cache = defaults();
                     rebuildWidgets();
-                }, accent));
-        templateButton = addRenderableWidget(new BetterButton(left + 160, top + 46, 210, 20,
-                Component.translatable(style.displayNameKey()), button -> {
+                }));
+        List<Dropdown.Option> layouts = new java.util.ArrayList<>();
+        for (DocStyle value : DocStyle.forKind(kind)) {
+            layouts.add(new Dropdown.Option(value.id(),
+                    Component.translatable(value.displayNameKey()).getString()));
+        }
+        addDropdown(Dropdown.at(left + 160, top + 46, 210)
+                .options(layouts)
+                .selected(style.id())
+                .tooltip("button.veriborder.change_style")
+                .onChange(id -> {
+                    DocStyle next = DocStyle.byIdOrNull(id);
+                    if (next == null || next.kind() != kind || next == style) {
+                        return;
+                    }
                     capture();
-                    style = DocStyle.nextForKind(kind, style);
+                    style = next;
                     cache.putString("style", style.id());
                     cache.putString("authority", style.defaultAuthority());
                     cache.putString("nationality", style.defaultNationality());
@@ -110,7 +133,7 @@ public class GeneratorScreen extends VeriScreen {
                     cache.putString("expiryDate", style.permanent() ? DateUtil.PERMANENT
                             : DateUtil.plusYears(cache.getString("issueDate"), style.validityYears()));
                     rebuildWidgets();
-                }, accent, true));
+                }));
         customButton = addRenderableWidget(new BetterButton(left + 376, top + 46, 120, 20,
                 Component.translatable(custom ? "screen.veriborder.generator.custom.on"
                         : "screen.veriborder.generator.custom.off"), button -> {
@@ -122,13 +145,16 @@ public class GeneratorScreen extends VeriScreen {
         // Permanent document name (independent from the custom cover name).
         displayName = addField(left + 24, top + 78, 150, "field.veriborder.display_name",
                 cache.getString("displayName"), "hint.veriborder.blank_official");
-        customColor = addField(left + 306, top + 78, 110, "field.veriborder.custom_color",
-                String.format("#%06X", cache.getInt("customColor") & 0xFFFFFF), "#RRGGBB");
-        addRenderableWidget(new BetterButton(left + 422, top + 74, 74, 20,
-                Component.translatable("button.veriborder.palette"), button -> {
-                    paletteIndex = (paletteIndex + 1) % PALETTE.length;
-                    customColor.setValue(String.format("#%06X", PALETTE[paletteIndex]));
-                }, Ui.PURPLE, true));
+        colorPicker = ColorPalette.at(left + 306, top + 74, 186, cache.getInt("customColor"));
+        colorHex = new EditBox(this.font, colorPicker.hexFieldX(), colorPicker.hexFieldY(),
+                colorPicker.hexFieldWidth(), 12, Component.empty());
+        colorHex.setBordered(false);
+        colorHex.setTextColor(0xFFE9F3FF);
+        colorHex.setMaxLength(7);
+        colorHex.setValue(ColorPalette.hexValue(cache.getInt("customColor")));
+        colorHex.setVisible(false);
+        addRenderableWidget(colorHex);
+        colorPicker.hex(colorHex);
 
         customName = addField(left + 24, top + 108, 150, "field.veriborder.custom_name", cache.getString("customName"),
                 "hint.veriborder.cover");
@@ -139,16 +165,20 @@ public class GeneratorScreen extends VeriScreen {
         nameLatin = addField(left + 266, top + 138, 230, "field.veriborder.name_latin", cache.getString("nameLatin"));
         number = addField(left + 24, top + 168, 214, "field.veriborder.number", cache.getString("number"),
                 "hint.veriborder.auto");
-        sexButton = addRenderableWidget(new BetterButton(left + 266, top + 164, 70, 20,
-                Component.translatable("sex.veriborder." + sexKey(sex)), button -> {
+        List<Dropdown.Option> sexes = new java.util.ArrayList<>();
+        for (String value : new String[]{"M", "F", "X"}) {
+            sexes.add(new Dropdown.Option(value,
+                    Component.translatable("sex.veriborder." + sexKey(value)).getString()));
+        }
+        addDropdown(Dropdown.at(left + 266, top + 164, 120)
+                .prefix(Component.translatable("field.veriborder.sex").getString() + ": ")
+                .options(sexes)
+                .selected(sex)
+                .onChange(id -> {
+                    sex = id;
                     capture();
-                    sex = switch (sex) {
-                        case "M" -> "F";
-                        case "F" -> "X";
-                        default -> "M";
-                    };
                     rebuildWidgets();
-                }, Ui.CYAN, true));
+                }));
         birth = addField(left + 24, top + 198, 214, "field.veriborder.birth", cache.getString("birthDate"),
                 "hint.veriborder.date");
         nationality = addField(left + 266, top + 198, 230, "field.veriborder.nationality", cache.getString("nationality"));
@@ -187,7 +217,8 @@ public class GeneratorScreen extends VeriScreen {
         cache.putString("customName", customName.getValue());
         cache.putString("customShortName", customShort.getValue());
         cache.putString("customType", customType.getValue());
-        cache.putInt("customColor", parseColor(customColor.getValue(), style.accentColor()));
+        cache.putInt("customColor", colorPicker == null
+                ? style.accentColor() : colorPicker.commit());
     }
 
     private void generate() {
@@ -198,21 +229,11 @@ public class GeneratorScreen extends VeriScreen {
         data.putBoolean("customStyle", custom);
         data.putString("sex", sex);
         if (custom && data.getString("customName").isBlank()) {
-            data.putString("customName", style == DocStyle.CN_ID ? "Custom Identity Card" : "Custom Document");
+            data.putString("customName", style == DocStyle.CN_ID
+                ? Component.translatable("screen.veriborder.generator.custom_id_name").getString()
+                : Component.translatable("screen.veriborder.generator.custom_doc_name").getString());
         }
         ModNetwork.CHANNEL.sendToServer(new ModifierGeneratePacket(data));
-    }
-
-    private static int parseColor(String value, int fallback) {
-        if (value == null) {
-            return fallback;
-        }
-        String cleaned = value.trim().replace("#", "").replace("0x", "");
-        try {
-            return Integer.parseInt(cleaned, 16) & 0x00FFFFFF;
-        } catch (NumberFormatException exception) {
-            return fallback;
-        }
     }
 
     private static String sexKey(String sex) {
@@ -221,6 +242,52 @@ public class GeneratorScreen extends VeriScreen {
             case "X" -> "x";
             default -> "male";
         };
+    }
+
+    @Override
+    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        // The RGB input only exists (and accepts input) while the palette is open.
+        if (colorHex != null) {
+            colorHex.setVisible(colorPicker != null && colorPicker.open());
+        }
+        super.render(graphics, mouseX, mouseY, partialTick);
+        // An open palette paints above the form rows that follow it; the RGB input
+        // is re-rendered on top of the panel so it stays usable.
+        overlay(graphics, g -> {
+            if (colorPicker != null && colorPicker.open()) {
+                colorPicker.draw(g, font, Ui.PURPLE);
+                if (colorHex != null) {
+                    colorHex.render(g, (int) toUiX(mouseX), (int) toUiY(mouseY), partialTick);
+                }
+            }
+        });
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        double uiX = toUiX(mouseX);
+        double uiY = toUiY(mouseY);
+        // 26.4: an open dropdown owns the click (including dismissal).
+        if (dropdownClick(uiX, uiY)) {
+            return true;
+        }
+        // An open palette owns the click even where a form field sits underneath -
+        // except for its own RGB input, which is a real widget.
+        if (colorPicker != null && colorPicker.open()) {
+            if (colorPicker.overHexField(uiX, uiY)) {
+                return super.mouseClicked(mouseX, mouseY, button);
+            }
+            if (colorPicker.mouseClicked(uiX, uiY)) {
+                if (!colorPicker.open()) {
+                    capture();
+                }
+                return true;
+            }
+        }
+        if (super.mouseClicked(mouseX, mouseY, button)) {
+            return true;
+        }
+        return colorPicker != null && colorPicker.mouseClicked(uiX, uiY);
     }
 
     @Override
@@ -238,8 +305,9 @@ public class GeneratorScreen extends VeriScreen {
         graphics.drawString(font, Ui.ellipsis(Component.translatable("screen.veriborder.generator.effective",
                 effective).getString(), 104), left + 180, top + 81,
                 typedName.isBlank() ? Ui.DIM : Ui.CYAN, false);
-        int color = parseColor(customColor == null ? "" : customColor.getValue(), style.accentColor());
-        graphics.fill(left + 292, top + 80, left + 302, top + 94, 0xFF000000 | color);
-        graphics.renderOutline(left + 292, top + 80, 10, 14, Ui.BORDER);
+        // Shared palette picker: swatches + recent colours + RGB input.
+        if (colorPicker != null && !colorPicker.open()) {
+            colorPicker.draw(graphics, font, Ui.PURPLE);
+        }
     }
 }

@@ -20,10 +20,22 @@ import java.util.UUID;
  * Border state machine shared by the entry gate, the exit gate, the officer
  * terminal and the operator commands.
  *
- * <p>Entry never consumes a visa/endorsement record: it stores an
- * {@link BorderSession} naming the document and the exact record that matched.
- * Exit consumes precisely that record and clears the session. Everything is
- * kept in {@link BorderTravelData} (overworld saved data).</p>
+ * <p>Entry never consumes a visa/endorsement record: it stores a
+ * {@link BorderEntry} naming the person, the document and the exact record that
+ * matched. Exit consumes precisely that record and clears the entry. Everything
+ * is kept in {@link BorderTravelData} (overworld saved data).</p>
+ *
+ * <p><b>26.3 rules.</b></p>
+ * <ul>
+ *   <li>The {@code all} gate mode is gone: an entry is only granted by a visa, an
+ *       endorsement or a permanent code that matches the gate.</li>
+ *   <li>An entry belongs to a <em>person</em> ({@link BorderEntry#personKey()}),
+ *       not to one booklet, so a renewed passport or a second document of the
+ *       same holder resolves to the same entry.</li>
+ *   <li>A permanent code is only valid for the country it was issued for
+ *       ({@link DocumentValidator#matchPermanentCode(DocumentData, String)});
+ *       codes without a country keep the legacy universal behaviour.</li>
+ * </ul>
  */
 public final class BorderService {
     /** Denial reasons are also translation keys rendered by the reader/gate UI. */
@@ -31,6 +43,7 @@ public final class BorderService {
     public static final String REASON_NO_ENTRY_RECORD = "verify.veriborder.reason.no_entry_record";
     public static final String REASON_SESSION_DOCUMENT_MISMATCH =
             "verify.veriborder.reason.session_document_mismatch";
+    public static final String REASON_NO_MATCHING_CODE = "verify.veriborder.reason.no_matching_code";
     public static final String REASON_SESSION_RECORD_MISSING = "verify.veriborder.reason.session_record_missing";
     public static final String REASON_OVERSTAY = "verify.veriborder.reason.overstay";
 
@@ -43,12 +56,17 @@ public final class BorderService {
     private BorderService() {
     }
 
-    /** The matched credential of a successful entry (or {@link BorderSession#KIND_ALL}). */
+    /** The matched credential of a successful entry. */
     public record EntryMatch(String kind, String recordId, String code) {
         public EntryMatch {
-            kind = kind == null || kind.isBlank() ? BorderSession.KIND_ALL : kind;
+            kind = kind == null || kind.isBlank() ? BorderEntry.KIND_NONE : kind;
             recordId = recordId == null ? "" : recordId;
             code = code == null ? "" : code;
+        }
+
+        /** Entry granted by the issuer/officer policy instead of a gate credential. */
+        public static EntryMatch none() {
+            return new EntryMatch(BorderEntry.KIND_NONE, "", "");
         }
     }
 
@@ -60,33 +78,63 @@ public final class BorderService {
         return server == null ? null : BorderTravelData.get(server);
     }
 
-    /** Active session of that player, or {@code null}. */
+    /** Active entry presented by that account, or {@code null}. */
     @Nullable
-    public static BorderSession session(ServerPlayer player) {
+    public static BorderEntry entry(ServerPlayer player) {
         BorderTravelData data = travelData(player);
-        return data == null ? null : data.session(player.getUUID());
+        return data == null ? null : data.entryForPlayer(player.getUUID());
     }
 
-    public static boolean hasSession(ServerPlayer player) {
-        return session(player) != null;
+    public static boolean hasEntry(ServerPlayer player) {
+        return entry(player) != null;
     }
 
-    // ------------------------------------------------------------ entry match
+    // -------------------------------------------------------------- identity
 
     /**
-     * Resolves which credential of {@code doc} satisfies the gate. Mirrors
-     * {@link DocumentValidator#validateGate} exactly (visa records before
-     * visa-free codes, passport before permit in {@code both} mode) so a
-     * document that passed validation always yields a match.
+     * Signature key of the person a document belongs to. The signed
+     * {@link DocumentData#personKey()} wins; a document without holder data falls
+     * back to its document number so the entry stays addressable.
+     */
+    public static String personKey(@Nullable DocumentData doc) {
+        if (doc == null) {
+            return "";
+        }
+        String key = doc.personKey().trim();
+        if (!key.isEmpty()) {
+            return key;
+        }
+        String number = doc.number().trim();
+        return number.isEmpty() ? "" : "doc:" + number;
+    }
+
+    /** Stateless person key from a holder name and birth date. */
+    public static String personKey(@Nullable String name, @Nullable String birthDate) {
+        return DocumentData.computePersonKey(name, birthDate);
+    }
+
+    /**
+     * Resolves which credential of {@code doc} satisfies the gate at
+     * {@code gateCountry}. Mirrors {@link DocumentValidator#validateGate} exactly
+     * (permanent code before configured codes, visa records before visa-free
+     * entries, passport before permit in {@code both} mode) so a document that
+     * passed validation always yields a match.
+     *
+     * <p>There is no {@code all} branch: without a matching visa, endorsement or
+     * permanent code the result is {@code null} and the gate must deny.</p>
      */
     @Nullable
-    public static EntryMatch resolveEntry(DocumentData doc, String gateMode, Collection<String> gateCodes) {
+    public static EntryMatch resolveEntry(DocumentData doc, String gateMode, Collection<String> gateCodes,
+                                          String gateCountry) {
         if (doc == null) {
             return null;
         }
         String mode = DocumentValidator.normalizeMode(gateMode);
-        if (DocumentValidator.GATE_MODE_ALL.equals(mode)) {
-            return new EntryMatch(BorderSession.KIND_ALL, "", "");
+        // 26.3 permanent-code slot (permit + passport): the code must belong to
+        // the gate's country; legacy country-less codes stay universal.
+        String permanent = DocumentValidator.matchPermanentCode(doc, gateCountry);
+        if (permanent != null) {
+            return new EntryMatch(BorderEntry.KIND_VISA_FREE, "", permanent);
         }
         List<String> codes = CredentialCode.normalizeAll(gateCodes);
         if (codes.isEmpty()) {
@@ -103,20 +151,26 @@ public final class BorderService {
                 }
                 yield permit ? endorsementMatch(doc, codes) : null;
             }
-            default -> new EntryMatch(BorderSession.KIND_ALL, "", "");
+            default -> null;
         };
+    }
+
+    /** Country-less variant of {@link #resolveEntry(DocumentData, String, Collection, String)}. */
+    @Nullable
+    public static EntryMatch resolveEntry(DocumentData doc, String gateMode, Collection<String> gateCodes) {
+        return resolveEntry(doc, gateMode, gateCodes, "");
     }
 
     @Nullable
     private static EntryMatch visaMatch(DocumentData doc, List<String> codes) {
         for (VisaRecord visa : doc.visas()) {
             if (visa.active() && codes.contains(visa.code())) {
-                return new EntryMatch(BorderSession.KIND_VISA, visa.id(), visa.code());
+                return new EntryMatch(BorderEntry.KIND_VISA, visa.id(), visa.code());
             }
         }
         for (String free : doc.visaFreeCodes()) {
             if (codes.contains(free)) {
-                return new EntryMatch(BorderSession.KIND_VISA_FREE, "", free);
+                return new EntryMatch(BorderEntry.KIND_VISA_FREE, "", free);
             }
         }
         return null;
@@ -126,108 +180,296 @@ public final class BorderService {
     private static EntryMatch endorsementMatch(DocumentData doc, List<String> codes) {
         for (EndorsementRecord endorsement : doc.endorsements()) {
             if (endorsement.active() && codes.contains(endorsement.code())) {
-                return new EntryMatch(BorderSession.KIND_ENDORSEMENT, endorsement.id(), endorsement.code());
+                return new EntryMatch(BorderEntry.KIND_ENDORSEMENT, endorsement.id(), endorsement.code());
             }
         }
         return null;
     }
 
+    /**
+     * The active entry of the traveller presenting {@code doc}: first by that
+     * document number, then by the holder's person key. This is what makes a
+     * renewed passport of the same holder find the entry recorded on the old one.
+     */
+    @Nullable
+    public static BorderEntry findEntry(@Nullable BorderTravelData data, @Nullable DocumentData doc) {
+        if (data == null || doc == null) {
+            return null;
+        }
+        BorderEntry byNumber = data.entryByDocument(doc.number());
+        if (byNumber != null) {
+            return byNumber;
+        }
+        String key = personKey(doc);
+        return key.isEmpty() ? null : data.entry(key);
+    }
+
+    /** World-level variant of {@link #findEntry(BorderTravelData, DocumentData)}. */
+    @Nullable
+    public static BorderEntry findEntry(ServerPlayer player, @Nullable DocumentData doc) {
+        return findEntry(travelData(player), doc);
+    }
+
+    /**
+     * 26.3 identity rule: an entry binds the <em>person</em>, not one booklet.
+     *
+     * <p>The document presented at the exit gate is accepted when it is the very
+     * document the entry was recorded on, when its person key equals the entry's,
+     * or — for entries migrated from 26.2, whose key carries no birth date — when
+     * the holder name matches (ignoring case and surrounding whitespace).</p>
+     */
+    public static boolean sameTraveller(@Nullable BorderEntry entry, @Nullable DocumentData doc) {
+        if (entry == null || doc == null) {
+            return false;
+        }
+        if (!entry.documentNumber().isBlank() && entry.documentNumber().equals(doc.number())) {
+            return true;
+        }
+        String key = personKey(doc);
+        if (!entry.personKey().isBlank() && !key.isEmpty() && entry.personKey().equals(key)) {
+            return true;
+        }
+        String holder = entry.holder();
+        String presented = doc.name() == null ? "" : doc.name().trim();
+        if (holder.isEmpty() || presented.isEmpty() || !holder.equalsIgnoreCase(presented)) {
+            return false;
+        }
+        // A name-only match is reserved for migrated 26.2 entries: their fallback
+        // key has no birth date and carries the document number in that slot.
+        // A modern key (name|birthDate) must not let a namesake with a different
+        // birth date pass as the same traveller.
+        String entryKey = entry.personKey();
+        int separator = entryKey.indexOf('|');
+        String birthSlot = separator < 0 ? "" : entryKey.substring(separator + 1);
+        return !entry.documentNumber().isBlank() && birthSlot.equals(entry.documentNumber());
+    }
+
+    /**
+     * True when {@code doc} is the very document the entry was recorded on. Only
+     * in that case does the exit gate require (and consume) the credential record
+     * the entry bound: a renewed passport of the same holder cannot carry a record
+     * that stayed on the previous booklet.
+     */
+    public static boolean isEntryDocument(@Nullable BorderEntry entry, @Nullable DocumentData doc) {
+        return entry != null && doc != null && entry.documentNumber().equals(doc.number());
+    }
+
     // -------------------------------------------------------------- recording
 
     /**
-     * Creates and stores the session for an accepted entry and logs
+     * Creates and stores the entry for an accepted arrival and logs
      * {@code ALLOW_IN}. The credential record is left untouched on purpose.
      */
-    public static BorderSession beginEntry(ServerPlayer player, BlockPos gatePos, String port, int overstayDays,
-                                           DocumentData doc, EntryMatch match) {
+    public static BorderEntry beginEntry(ServerPlayer player, BlockPos gatePos, String port, int overstayDays,
+                                         DocumentData doc, EntryMatch match) {
+        return beginEntry(travelData(player), player.getUUID(), playerName(player), dimension(player),
+                gatePos, port, overstayDays, doc, match);
+    }
+
+    /**
+     * Data-level entry used by the gates and by the issue-entry policy. Kept free
+     * of world/player access so the entry contract is unit-testable.
+     */
+    public static BorderEntry beginEntry(@Nullable BorderTravelData data, UUID player, String playerName,
+                                         String dimension, BlockPos gatePos, String port, int overstayDays,
+                                         DocumentData doc, EntryMatch match) {
         String document = doc == null ? "" : doc.number();
-        String dimension = dimension(player);
-        BorderSession session = new BorderSession(player.getUUID(), playerName(player), document,
-                match.recordId(), match.code(), match.kind(), dimension, gatePos,
-                System.currentTimeMillis(), port, overstayDays, false);
-        BorderTravelData data = travelData(player);
-        if (data != null) {
-            data.putSession(session);
-            data.addLog(new BorderLog(System.currentTimeMillis(), player.getUUID(), playerName(player),
+        String holder = doc == null ? "" : doc.name();
+        BorderEntry entry = new BorderEntry(personKey(doc), document, holder, match.recordId(), match.code(),
+                match.kind(), dimension, gatePos, System.currentTimeMillis(), port, overstayDays, false,
+                player, playerName);
+        if (data != null && !entry.personKey().isBlank()) {
+            data.putEntry(entry);
+            data.addLog(new BorderLog(System.currentTimeMillis(), player, playerName,
                     BorderLog.IN, BorderLog.ALLOW_IN, document, match.code(), match.kind(),
                     gate(gatePos, dimension), ""));
         }
-        return session;
+        return entry;
+    }
+
+    /**
+     * 26.2/26.3 issue-entry policy: a freshly issued passport/permit may start its
+     * holder in the entry state, but a domestic ID card never does.
+     *
+     * <p>The entry must be bound to the <em>issued</em> document number. An
+     * existing entry is only kept when it already names that exact document; a
+     * stale entry (an older document or a leftover test entry) is replaced,
+     * otherwise the new document would never match at the exit gate.</p>
+     */
+    public static boolean shouldAdoptIssuedEntry(DocumentKind kind, boolean issueEntryState,
+                                                 @Nullable BorderEntry existing, String issuedNumber) {
+        if (kind == null || kind == DocumentKind.ID_CARD || !issueEntryState) {
+            return false;
+        }
+        String number = issuedNumber == null ? "" : issuedNumber.trim();
+        if (number.isEmpty()) {
+            return false;
+        }
+        return existing == null || !number.equals(existing.documentNumber());
+    }
+
+    /**
+     * Replaces any entry of the same person with one bound to the freshly issued
+     * document, so the exit gate can match the new document instead of refusing
+     * the traveller with "no entry record".
+     */
+    public static BorderEntry replaceEntry(ServerPlayer player, BlockPos gatePos, String port, int overstayDays,
+                                           DocumentData doc, EntryMatch match) {
+        return replaceEntry(travelData(player), player.getUUID(), playerName(player), dimension(player),
+                gatePos, port, overstayDays, doc, match);
+    }
+
+    /** Data-level variant of {@link #replaceEntry(ServerPlayer, BlockPos, String, int, DocumentData, EntryMatch)}. */
+    public static BorderEntry replaceEntry(@Nullable BorderTravelData data, UUID player, String playerName,
+                                           String dimension, BlockPos gatePos, String port, int overstayDays,
+                                           DocumentData doc, EntryMatch match) {
+        if (data != null) {
+            // The person's entry (by key) and anything this account still presents
+            // are both replaced, so a stale leftover row can never survive.
+            data.removeEntry(personKey(doc));
+            data.removeEntryForPlayer(player);
+        }
+        return beginEntry(data, player, playerName, dimension, gatePos, port, overstayDays, doc, match);
     }
 
     /** Logs a denied entry/exit attempt. Nothing is stored or animated. */
     public static void deny(ServerPlayer player, BlockPos gatePos, @Nullable DocumentData doc,
-                            @Nullable BorderSession session, String direction, String reasonKey) {
+                            @Nullable BorderEntry entry, String direction, String reasonKey) {
         BorderTravelData data = travelData(player);
         if (data == null) {
             return;
         }
         String document = doc != null ? doc.number()
-                : session != null ? session.documentNumber() : "";
+                : entry != null ? entry.documentNumber() : "";
         boolean inbound = BorderLog.IN.equals(direction);
         data.addLog(new BorderLog(System.currentTimeMillis(), player.getUUID(), playerName(player),
                 direction, inbound ? BorderLog.DENY_IN : BorderLog.DENY_OUT, document,
-                session == null ? "" : session.code(), session == null ? "" : session.kind(),
+                entry == null ? "" : entry.code(), entry == null ? "" : entry.kind(),
                 gate(gatePos, dimension(player)), reasonKey));
     }
 
     /**
-     * Completes a successful exit: detects and flags an overstay, logs
-     * {@code ALLOW_OUT} / {@code OVERSTAY}, then clears the session.
+     * Completes a successful departure: detects and flags an overstay, logs
+     * {@code ALLOW_OUT} / {@code OVERSTAY}, then clears the entry.
      *
      * @return {@code true} when the stay was an overstay (exit still allowed)
      */
-    public static boolean finishExit(ServerPlayer player, BorderSession session, BlockPos gatePos) {
-        BorderTravelData data = travelData(player);
+    public static boolean finishExit(ServerPlayer player, BorderEntry entry, BlockPos gatePos) {
+        return finishExit(player, entry, gatePos, entry.documentNumber());
+    }
+
+    /**
+     * Exit variant that logs the document <em>actually presented</em> at the exit
+     * gate. A traveller leaving on a renewed passport of the same holder is logged
+     * with that passport number, not with the number the entry was recorded on.
+     */
+    public static boolean finishExit(ServerPlayer player, BorderEntry entry, BlockPos gatePos,
+                                     @Nullable String exitDocumentNumber) {
+        return finishExit(player, entry, gatePos, exitDocumentNumber, false);
+    }
+
+    /**
+     * Exit variant that also marks the departure as an OVERSTAY when the
+     * presented document itself expired during the stay. A permit/endorsement (or
+     * passport) that ran out while the traveller was inside the country must not
+     * trap them: the exit is allowed and flagged instead.
+     */
+    public static boolean finishExit(ServerPlayer player, BorderEntry entry, BlockPos gatePos,
+                                     @Nullable String exitDocumentNumber, boolean documentExpired) {
+        return finishExit(travelData(player), player.getUUID(), playerName(player), dimension(player),
+                entry, gatePos, exitDocumentNumber, documentExpired);
+    }
+
+    /**
+     * Data-level departure used by the gates and by the integration tests: no
+     * world/player access, so the complete entry -> exit contract (overstay
+     * detection, log record, entry removal) is testable without a live server.
+     *
+     * @return {@code true} when the stay was an overstay (exit still allowed)
+     */
+    public static boolean finishExit(@Nullable BorderTravelData data, UUID player, String playerName,
+                                     String dimension, BorderEntry entry, BlockPos gatePos,
+                                     @Nullable String exitDocumentNumber) {
+        return finishExit(data, player, playerName, dimension, entry, gatePos, exitDocumentNumber, false);
+    }
+
+    /**
+     * Full data-level departure: {@code documentExpired} marks the log as an
+     * OVERSTAY even when the entry itself is still inside its allowance.
+     */
+    public static boolean finishExit(@Nullable BorderTravelData data, UUID player, String playerName,
+                                     String dimension, BorderEntry entry, BlockPos gatePos,
+                                     @Nullable String exitDocumentNumber, boolean documentExpired) {
         long now = System.currentTimeMillis();
-        boolean overstay = session.overstayed(now);
+        boolean overstay = entry.overstayed(now) || documentExpired;
         if (data == null) {
             return overstay;
         }
-        if (overstay) {
-            // Keep the flag visible on the stored session until it is cleared.
-            data.putSession(session.withOverstay(true));
-        }
-        data.addLog(new BorderLog(now, player.getUUID(), playerName(player), BorderLog.OUT,
-                overstay ? BorderLog.OVERSTAY : BorderLog.ALLOW_OUT, session.documentNumber(),
-                session.code(), session.kind(), gate(gatePos, dimension(player)),
+        String exitNumber = exitDocumentNumber == null || exitDocumentNumber.isBlank()
+                ? entry.documentNumber() : exitDocumentNumber.trim();
+        data.addLog(new BorderLog(now, player, playerName, BorderLog.OUT,
+                overstay ? BorderLog.OVERSTAY : BorderLog.ALLOW_OUT, exitNumber,
+                entry.code(), entry.kind(), gate(gatePos, dimension),
                 overstay ? REASON_OVERSTAY : ""));
-        data.clearSession(player.getUUID());
+        data.removeEntry(entry.personKey());
         return overstay;
     }
 
     /**
-     * Officer/command session removal. Logs an {@code OFFICER} entry naming the
-     * operator when a session actually existed.
+     * Officer/command entry removal by person key. Logs an {@code OFFICER} entry
+     * naming the operator when an entry actually existed.
      *
-     * @return the removed session, or {@code null} when the player had none
+     * @return the removed entry, or {@code null} when there was none
      */
     @Nullable
-    public static BorderSession clearSession(MinecraftServer server, UUID player, String operatorName) {
-        if (server == null || player == null) {
+    public static BorderEntry clearEntry(@Nullable MinecraftServer server, @Nullable String personKey,
+                                         String operatorName) {
+        if (server == null || personKey == null || personKey.isBlank()) {
             return null;
         }
         BorderTravelData data = BorderTravelData.get(server);
-        BorderSession removed = data.clearSession(player);
+        BorderEntry removed = data.removeEntry(personKey);
         if (removed != null) {
-            data.addLog(new BorderLog(System.currentTimeMillis(), player, removed.playerName(),
-                    BorderLog.OFFICER, BorderLog.OFFICER_CLEAR, removed.documentNumber(),
-                    removed.code(), removed.kind(), gate(removed.gatePos(), removed.dimension()),
-                    operatorName == null ? "" : operatorName));
+            logOfficerClear(data, removed, operatorName);
         }
         return removed;
     }
 
+    /**
+     * Officer-console entry removal by account id: clears the entry that account
+     * presented, whichever document it is bound to.
+     */
+    @Nullable
+    public static BorderEntry clearEntryFor(@Nullable MinecraftServer server, @Nullable UUID player,
+                                            String operatorName) {
+        if (server == null || player == null) {
+            return null;
+        }
+        BorderTravelData data = BorderTravelData.get(server);
+        BorderEntry removed = data.removeEntryForPlayer(player);
+        if (removed != null) {
+            logOfficerClear(data, removed, operatorName);
+        }
+        return removed;
+    }
+
+    private static void logOfficerClear(BorderTravelData data, BorderEntry removed, String operatorName) {
+        data.addLog(new BorderLog(System.currentTimeMillis(), removed.player(), removed.playerName(),
+                BorderLog.OFFICER, BorderLog.OFFICER_CLEAR, removed.documentNumber(),
+                removed.code(), removed.kind(), gate(removed.gatePos(), removed.dimension()),
+                operatorName == null ? "" : operatorName));
+    }
+
     // ---------------------------------------------------------- officer packet
 
-    /** Session list for the officer payload (newest entry first). */
-    public static ListTag sessionsTag(MinecraftServer server) {
+    /** Entry list for the officer payload (newest entry first, one row per person). */
+    public static ListTag entriesTag(MinecraftServer server) {
         ListTag list = new ListTag();
         if (server == null) {
             return list;
         }
-        for (BorderSession session : BorderTravelData.get(server).sessions()) {
-            list.add(session.toOfficerTag());
+        for (BorderEntry entry : BorderTravelData.get(server).entries()) {
+            list.add(entry.toOfficerTag());
         }
         return list;
     }

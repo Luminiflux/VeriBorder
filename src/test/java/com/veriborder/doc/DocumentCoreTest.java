@@ -544,27 +544,37 @@ class DocumentCoreTest {
     }
 
     @Test
-    void documentsWithoutAVisaFreeListStillVerify() {
+    void documentsWithoutAPermanentCodeListStillVerify() {
         DocumentData doc = DocumentFactory.sample(DocStyle.CN_PASSPORT);
         CompoundTag tag = doc.copyTag();
+        tag.remove("permanentCodes");
         tag.remove("visaFreeCodes");
         DocumentIntegrity.sign(tag);
         DocumentData legacy = DocumentData.fromTag(tag);
         assertTrue(legacy.integrityValid(), "reading an old tag must not invalidate its signature");
+        assertTrue(legacy.permanentCodes().isEmpty());
         assertTrue(legacy.visaFreeCodes().isEmpty());
-        assertTrue(DocumentValidator.validateGate(legacy, DeviceType.EGATE, "all", List.of()).valid());
+        // Without a permanent code a code-less gate still requires a credential.
+        assertFalse(DocumentValidator.validateGate(legacy, DeviceType.EGATE, "both", List.of()).valid());
 
         assertTrue(legacy.addVisaFreeCode("12345678"));
         assertTrue(legacy.integrityValid());
-        assertFalse(legacy.copyTag().getList("visaFreeCodes", Tag.TAG_STRING).isEmpty());
+        assertFalse(legacy.copyTag().getList("permanentCodes", Tag.TAG_COMPOUND).isEmpty(),
+                "26.3 stores permanent codes as compounds, not as the legacy string list");
+        assertFalse(legacy.copyTag().contains("visaFreeCodes"),
+                "the legacy list is folded into the new structure");
     }
 
     @Test
-    void tamperedVisaFreeCodesBreakIntegrity() {
+    void tamperedPermanentCodesBreakIntegrity() {
         DocumentData doc = DocumentFactory.sample(DocStyle.CN_PASSPORT);
         assertTrue(doc.addVisaFreeCode("12345678"));
         CompoundTag tampered = doc.copyTag();
-        tampered.getList("visaFreeCodes", Tag.TAG_STRING).add(StringTag.valueOf("99999999"));
+        CompoundTag forged = new CompoundTag();
+        forged.putString("code", "99999999");
+        forged.putString("issuerCountry", "");
+        forged.putString("purpose", DocumentData.PermanentPurpose.VISA_FREE.id());
+        tampered.getList("permanentCodes", Tag.TAG_COMPOUND).add(forged);
         assertFalse(DocumentData.fromTag(tampered).integrityValid());
     }
 
@@ -628,25 +638,34 @@ class DocumentCoreTest {
     }
 
     @Test
-    void gateAllModeAcceptsAnyValidDocumentWithoutCodes() {
+    void gateWithoutACredentialNeverOpens() {
+        // 26.3 removed the "all" mode: the legacy value loads as both, so a
+        // document with no matching visa/endorsement/permanent code is refused.
         DocumentData id = DocumentFactory.sample(DocStyle.CN_ID);
-        assertTrue(DocumentValidator.validateGate(id, DeviceType.EGATE, "all", List.of()).valid());
+        assertEquals(VerificationResult.Code.NO_MATCHING_CODE,
+                DocumentValidator.validateGate(id, DeviceType.EGATE, "all", List.of()).code());
+        assertEquals(VerificationResult.Code.NO_MATCHING_CODE,
+                DocumentValidator.validateGate(id, DeviceType.EGATE, "any", List.of()).code());
+        assertEquals(VerificationResult.Code.NO_MATCHING_CODE,
+                DocumentValidator.validateGate(id, DeviceType.EGATE, "", List.of()).code());
 
         DocumentData passport = DocumentFactory.sample(DocStyle.CN_PASSPORT);
         passport.clearVisas();
-        assertTrue(DocumentValidator.validateGate(passport, DeviceType.EGATE, "all", List.of()).valid(),
-                "all mode does not require a visa");
+        assertEquals(VerificationResult.Code.NO_MATCHING_CODE,
+                DocumentValidator.validateGate(passport, DeviceType.EGATE, "all", List.of()).code(),
+                "the removed all mode does not bypass the visa requirement");
 
         DocumentData permit = DocumentFactory.sample(DocStyle.HK_MACAO_PERMIT);
         permit.clearEndorsements();
-        assertTrue(DocumentValidator.validateGate(permit, DeviceType.EGATE, "all", List.of()).valid(),
-                "all mode does not require an endorsement");
+        assertEquals(VerificationResult.Code.NO_MATCHING_CODE,
+                DocumentValidator.validateGate(permit, DeviceType.EGATE, "all", List.of()).code(),
+                "the removed all mode does not bypass the endorsement requirement");
 
+        // The normal document checks still run first and win over the mode.
         DocumentData lost = DocumentFactory.sample(DocStyle.CN_ID);
         lost.setStatus(DocumentStatus.LOST);
         assertEquals(VerificationResult.Code.LOST,
-                DocumentValidator.validateGate(lost, DeviceType.EGATE, "all", List.of("12345678")).code(),
-                "all mode still runs the normal document checks");
+                DocumentValidator.validateGate(lost, DeviceType.EGATE, "all", List.of("12345678")).code());
 
         DocumentData expired = DocumentFactory.sample(DocStyle.CN_PASSPORT);
         expired.setIssueDate(LocalDate.now().minusYears(2).toString());
@@ -663,9 +682,12 @@ class DocumentCoreTest {
         assertTrue(DocumentValidator.validateGate(passport, DeviceType.EGATE, "visa",
                 List.of("00112233")).valid());
 
-        VerificationResult miss = DocumentValidator.validateGate(passport, DeviceType.EGATE, "visa",
+        // 26.2 permanent-code slot: a non-empty list is accepted even when the
+        // gate's configured code does not match (returning to the issuing country).
+        VerificationResult permanent = DocumentValidator.validateGate(passport, DeviceType.EGATE, "visa",
                 List.of("00112234"));
-        assertEquals(VerificationResult.Code.NO_MATCHING_CODE, miss.code());
+        assertTrue(permanent.valid(), "a permanent code opens the visa gate");
+        assertEquals("00112233", permanent.detail(), "detail carries the permanent code");
 
         passport.clearVisaFreeCodes();
         assertEquals(VerificationResult.Code.NO_MATCHING_CODE,
@@ -697,20 +719,25 @@ class DocumentCoreTest {
 
     @Test
     void gateModesNormalizeLegacyNames() {
-        assertEquals("all", DocumentValidator.normalizeMode("any"));
-        assertEquals("all", DocumentValidator.normalizeMode("ALL"));
-        assertEquals("all", DocumentValidator.normalizeMode(null));
-        assertEquals("all", DocumentValidator.normalizeMode("nonsense"));
+        // 26.3: every unknown/removed mode normalises to both (never "accept all").
+        assertEquals("both", DocumentValidator.normalizeMode("any"));
+        assertEquals("both", DocumentValidator.normalizeMode("ALL"));
+        assertEquals("both", DocumentValidator.normalizeMode("all"));
+        assertEquals("both", DocumentValidator.normalizeMode(null));
+        assertEquals("both", DocumentValidator.normalizeMode(""));
+        assertEquals("both", DocumentValidator.normalizeMode("nonsense"));
         assertEquals("visa", DocumentValidator.normalizeMode("passport"));
         assertEquals("visa", DocumentValidator.normalizeMode("Visa"));
         assertEquals("endorsement", DocumentValidator.normalizeMode("permit"));
         assertEquals("both", DocumentValidator.normalizeMode("both"));
 
-        assertEquals("all", DeviceBlockEntity.normalizeGateMode("any"));
+        assertEquals("both", DeviceBlockEntity.normalizeGateMode("any"));
+        assertEquals("both", DeviceBlockEntity.normalizeGateMode("all"));
+        assertEquals("both", DeviceBlockEntity.normalizeGateMode(""));
+        assertEquals("both", DeviceBlockEntity.normalizeGateMode(null));
         assertEquals("visa", DeviceBlockEntity.normalizeGateMode("passport"));
         assertEquals("endorsement", DeviceBlockEntity.normalizeGateMode("permit"));
         assertEquals("both", DeviceBlockEntity.normalizeGateMode("both"));
-        assertEquals("all", DeviceBlockEntity.normalizeGateMode(""));
 
         DocumentData passport = DocumentFactory.sample(DocStyle.US_PASSPORT);
         assertTrue(DocumentValidator.validateGate(passport, DeviceType.EGATE, "passport",
