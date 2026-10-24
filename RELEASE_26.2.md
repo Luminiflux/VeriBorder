@@ -1,3 +1,22 @@
+## This build / 本次构建
+
+**Permits now carry their own endorsement.** A permit issuing machine always stamps a built-in endorsement (three-month single entry by default), starting on the document's issue date and expiring by the endorsement's own duration instead of the document's validity lock. The endorsement type can be locked per machine and cannot be overridden by the applicant.
+
+**通行证自带签注。** 通行证发证机签发的证件现在自带一条签注（默认"三个月一次"），起始日为证件签发日，到期按签注自身时长计算，不再继承证件有效期锁。签注类型可在配置界面锁定，申请人无法覆盖。
+
+**Validity is entered in months.** Entry, visit and endorsement durations are now month-based with `LocalDate.plusMonths` (month-end clamping included); 12 months display as 1 year and 15 as 1 year 3 months. Legacy year values migrate automatically.
+
+**有效期改为按月。** 证件、签证、签注的时长改为按月填写，到期用 `plusMonths` 计算（含月末夹取）；12 个月显示为 1 年，15 个月显示为 1 年 3 个月。旧的年数自动迁移。
+
+**Birth dates use three dropdowns.** Year, month and day are picked instead of typed, in the issuer, generator, modifier and border terminal.
+
+**出生日期改为三段下拉。** 发证机、生成器、修改器与边检终端的出生日期改为年/月/日三个下拉，不再手输。
+
+**Item assets are shader-safe.** Item icons no longer carry feathered alpha, hidden interior faces were pruned from the 3D item models and `gui_light` was set to front, so items no longer look see-through under shader packs.
+
+**物品资产适配光影。** 物品图标去除羽化半透明，3D 物品模型剪除不可见内部面并设置 `gui_light: front`，光影下不再透视。
+
+---
 # VeriBorder 26.2
 
 The first stable release after 26.1. This version reworks most of the border mechanics and completes the UI, registry and server compatibility work.
