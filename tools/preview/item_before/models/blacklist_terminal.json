@@ -1,0 +1,4 @@
+{
+    "parent":  "veriborder:block/blacklist_terminal",
+    "gui_light":  "front"
+}

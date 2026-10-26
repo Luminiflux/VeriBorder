@@ -105,7 +105,11 @@ public class ModifierScreen extends VeriScreen {
     private void load(int index) {
         selected = index;
         working = entries.get(index).tag().copy();
-        style = DocStyle.byId(working.getString("style"));
+        // 26.5: a template-issued document signs `style = template:<id>`, so the
+        // editable layout is the base layout recorded next to it — reading the raw
+        // style id would drop the modifier back to the default layout (cn_id).
+        style = DocStyle.byId(DocumentData.baseStyleIdOf(working.getString("style"),
+                working.getString(DocumentData.TEMPLATE_BASE_STYLE)));
         sex = working.getString("sex").isBlank() ? "M" : working.getString("sex");
         status = working.getString("status").isBlank() ? "valid" : working.getString("status");
         visaSelected = -1;
@@ -320,6 +324,47 @@ public class ModifierScreen extends VeriScreen {
                 Component.translatable("button.veriborder.clear_custom"), button -> clearCustomStyle(), Ui.MUTED, true));
     }
 
+    /**
+     * 26.5: writes the layout keys without dropping a template identity.
+     *
+     * <p>{@code style} is the field every renderer resolves first, so a
+     * template-issued document signs {@code template:<templateId>} and keeps the
+     * official layout it is built on in {@code baseStyle}. Writing the bare layout
+     * id here — which is what this screen did before — silently turned a custom
+     * credential back into the official layout on every moderation edit, i.e. the
+     * "Japanese passport template is red again" bug.</p>
+     */
+    private void writeLayoutKeys() {
+        if (working == null || style == null) {
+            return;
+        }
+        working.putString("kind", style.kind().name());
+        String templateId = DocumentData.templateStyleIdOf(working.getString("style"));
+        if (templateId.isBlank()) {
+            templateId = working.getString(DocumentData.TEMPLATE_ID).trim();
+        }
+        if (templateId.isBlank()) {
+            working.putString("style", style.id());
+            return;
+        }
+        working.putString("style", DocumentData.TEMPLATE_STYLE_PREFIX + templateId);
+        working.putString(DocumentData.TEMPLATE_BASE_STYLE, style.id());
+    }
+
+    /**
+     * 26.5: an explicit layout switch is the one edit that ends a template identity —
+     * the document becomes a plain document of the new layout, so the template tint,
+     * crest and base map are dropped instead of surviving a layout they no longer
+     * describe.
+     */
+    private void clearTemplateIdentity() {
+        working.remove(DocumentData.TEMPLATE_ID);
+        working.remove(DocumentData.TEMPLATE_TINT);
+        working.remove(DocumentData.TEMPLATE_EMBLEM);
+        working.remove(DocumentData.TEMPLATE_TEXTURE);
+        working.remove(DocumentData.TEMPLATE_BASE_STYLE);
+    }
+
     /** 26.4: applies a layout chosen from the dropdown and clears custom overlays. */
     private void selectStyle(String styleId) {
         DocStyle next = DocStyle.byIdOrNull(styleId);
@@ -328,6 +373,7 @@ public class ModifierScreen extends VeriScreen {
         }
         captureProfile();
         style = next;
+        clearTemplateIdentity();
         working.putString("style", style.id());
         working.putString("kind", style.kind().name());
         working.remove("customStyle");
@@ -736,8 +782,7 @@ public class ModifierScreen extends VeriScreen {
         working.putString("address", address.getValue());
         working.putString("sex", sex);
         working.putString("status", status);
-        working.putString("style", style.id());
-        working.putString("kind", style.kind().name());
+        writeLayoutKeys();
         DocumentData.fromTag(working).sign();
     }
 
@@ -752,8 +797,7 @@ public class ModifierScreen extends VeriScreen {
         }
         working.putString("sex", sex);
         working.putString("status", status);
-        working.putString("style", style.id());
-        working.putString("kind", style.kind().name());
+        writeLayoutKeys();
         DocumentData.fromTag(working).sign();
         ModNetwork.CHANNEL.sendToServer(new ModifierSavePacket(entries.get(selected).slot(), working.copy()));
         onClose();

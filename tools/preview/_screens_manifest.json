@@ -1,0 +1,192 @@
+[
+  {
+    "id": "id_issuer",
+    "cn": "身份证发行机",
+    "accent": "#4FA8FF",
+    "size": "64x32",
+    "file": "id_issuer_screen.png",
+    "ui": "证件预览缩略 + 字段列表 + 「签发」按钮",
+    "note": "左侧是待制证的证件缩略（人像 + 打码字段 + 版号条码），右侧三行「标签条 + 值条」，底部整条强调色 CTA。",
+    "code": "ID"
+  },
+  {
+    "id": "passport_issuer",
+    "cn": "护照发行机",
+    "accent": "#E85D5D",
+    "size": "64x64",
+    "file": "passport_issuer_screen.png",
+    "ui": "MRZ 两条样张 + 国徽占位 + 打印进度条",
+    "note": "左上国徽占位（双环 + 五角星），右上证件字段，中部打印进度，底部两条等宽 MRZ 样张。",
+    "code": "PASSPORT"
+  },
+  {
+    "id": "permit_issuer",
+    "cn": "通行证发行机",
+    "accent": "#35D9C0",
+    "size": "64x32",
+    "file": "permit_issuer_screen.png",
+    "ui": "签注章预览 + 次数徽章 + 「加签」",
+    "note": "左侧圆形签注章预览（双环），右侧次数徽章 X2 与强调色「加签」按钮，底部次数 pip 条。",
+    "code": "PERMIT"
+  },
+  {
+    "id": "visa_issuer",
+    "cn": "签证签发机",
+    "accent": "#B980FF",
+    "size": "64x32",
+    "file": "visa_issuer_screen.png",
+    "ui": "贴纸样式签证 + 有效期 + 条形码",
+    "note": "左侧是一张「贴纸签证」（带右下折角），右侧有效期与条形码——与通行证的圆形章形成明显区分。",
+    "code": "VISA"
+  },
+  {
+    "id": "endorsement_machine",
+    "cn": "签注办理机",
+    "accent": "#FFB43D",
+    "size": "32x64",
+    "file": "endorsement_machine_screen.png",
+    "ui": "签注类型选择 + 次数",
+    "note": "竖屏：三行类型选择（首行高亮 + 实心单选点），底部次数 pip 与 NEXT。竖版布局与横屏机型一眼分开。",
+    "code": "ENDORSE"
+  },
+  {
+    "id": "self_visa",
+    "cn": "自助签证机",
+    "accent": "#6B7BFF",
+    "size": "64x64",
+    "file": "self_visa_screen.png",
+    "ui": "步骤条（1 选类型 2 支付 3 打印）+ 触摸提示",
+    "note": "左侧纵向步骤条（1 已完成实心 / 2-3 空心），底部「TOUCH TO START」触摸条——自助机专属的引导语言。",
+    "code": "SELF VISA"
+  },
+  {
+    "id": "self_endorsement",
+    "cn": "自助签注办理机",
+    "accent": "#FF7CC6",
+    "size": "64x64",
+    "file": "self_endorsement_screen.png",
+    "ui": "步骤条（1 选类型 2 支付 3 打印）+ 触摸提示",
+    "note": "横向步骤条 + 两张签注方案卡（首张选中）+ 底部指纹环「PLACE FINGER」。与自助签证共用步骤语言但布局横/纵、图标不同。",
+    "code": "SELF ENDORSE"
+  },
+  {
+    "id": "manual_terminal",
+    "cn": "前台人工核验终端",
+    "accent": "#45E2FF",
+    "size": "64x64",
+    "file": "manual_terminal_screen.png",
+    "ui": "玩家列表 + 状态徽章（IN / OUT）",
+    "note": "三行旅客卡片：头像 + 姓名条 + 证件条 + IN/OUT 徽章（绿=入境、红=出境）。唯一的「多人列表」界面。",
+    "code": "BORDER"
+  },
+  {
+    "id": "station_verifier",
+    "cn": "车站实名核验机",
+    "accent": "#62E67E",
+    "size": "64x64",
+    "file": "station_verifier_screen.png",
+    "ui": "护照插口示意 + 「请放置证件」",
+    "note": "证件书悬浮在插口上方，强调色下箭头指向插槽开口，最底一行 PLACE DOC。以「物理插口」为核心的唯一界面。",
+    "code": "VERIFY"
+  },
+  {
+    "id": "entry_stamp",
+    "cn": "入境盖章机",
+    "accent": "#FF8A45",
+    "size": "64x32",
+    "file": "entry_stamp_screen.png",
+    "ui": "印章图案 + 日期（下箭头 = IN）",
+    "note": "左侧圆形入境章（双环 + ENTRY 字样），右侧日期与向下箭头。出境章为镜像 + 三重细环 + 上箭头，两者成对。",
+    "code": "ENTRY"
+  },
+  {
+    "id": "exit_stamp",
+    "cn": "出境盖章机",
+    "accent": "#FFDD4D",
+    "size": "64x32",
+    "file": "exit_stamp_screen.png",
+    "ui": "印章图案 + 日期（上箭头 = OUT）",
+    "note": "入境章的镜像：章在右、日期在左、箭头向上。印章由「圆形双环」改为「方形内框」+ 内嵌上行箭头——同一家族、相反方向、不同印型。",
+    "code": "EXIT"
+  },
+  {
+    "id": "hotel_reader",
+    "cn": "酒店入住读卡器",
+    "accent": "#C77BFF",
+    "size": "64x32",
+    "file": "hotel_reader_screen.png",
+    "ui": "证件卡片 + 校验结果勾",
+    "note": "极扁超宽屏（3:1）：左证件卡图标、中房号、右侧大面积绿色对勾徽章。横向阅读，唯一以「房号」为主体的界面。",
+    "code": "HOTEL"
+  },
+  {
+    "id": "desk_scanner",
+    "cn": "台式证件扫描仪",
+    "accent": "#3DFFB0",
+    "size": "64x32",
+    "file": "desk_scanner_screen.png",
+    "ui": "证件卡片 + 校验结果勾/叉",
+    "note": "证件横置于扫描台，「扫描光束」是一条高亮横带；右侧绿色勾徽章表示本次读取通过（同一位置换红色叉即失败态）。",
+    "code": "SCAN"
+  },
+  {
+    "id": "renewal_machine",
+    "cn": "证件过期刷新机",
+    "accent": "#9BE04F",
+    "size": "32x64",
+    "file": "renewal_machine_screen.png",
+    "ui": "表单条目（高密度）+ 纵向进度",
+    "note": "最窄最竖的一块屏：7 行复选框表单条目铺满，右缘一条纵向进度条。密度是它的识别特征。",
+    "code": "RENEW"
+  },
+  {
+    "id": "loss_terminal",
+    "cn": "证件挂失注销终端",
+    "accent": "#FF6B4F",
+    "size": "64x32",
+    "file": "loss_terminal_screen.png",
+    "ui": "警示色 + 表单条目",
+    "note": "顶部 hazard 斜纹警示带 + 左侧红底感叹号三角，右侧表单条目，底部红色 REPORT 按钮（带留白的实心 CTA）。",
+    "code": "LOSS"
+  },
+  {
+    "id": "blacklist_terminal",
+    "cn": "口岸黑名单查询机",
+    "accent": "#FF2E63",
+    "size": "64x64",
+    "file": "blacklist_terminal_screen.png",
+    "ui": "警示色 + 表单条目",
+    "note": "整条红色标题横幅（深红字压亮红底，最高警示等级），四行命中记录（叉号 + 姓名条 + 命中条），底部红色汇总条。",
+    "code": "BLACKLIST"
+  },
+  {
+    "id": "print_preview",
+    "cn": "证照打印预览机",
+    "accent": "#8FC7E8",
+    "size": "64x32",
+    "file": "print_preview_screen.png",
+    "ui": "打印页缩略",
+    "note": "左侧一张「纸」——全屏唯一的亮白面，压印墨线和一枚小章；右侧队列进度与纸张规格。",
+    "code": "PRINT"
+  },
+  {
+    "id": "airport_checkin",
+    "cn": "机场登机核验机",
+    "accent": "#4FD8FF",
+    "size": "64x64",
+    "file": "airport_checkin_screen.png",
+    "ui": "登机牌（闸口/座位大号字）+ 竖条码",
+    "note": "整屏就是一张登机牌：撕线穿孔、GATE/SEAT 用 2 倍字模放大、右半是竖排条码。唯一用 scale-2 字模的界面。",
+    "code": "BOARDING"
+  },
+  {
+    "id": "stamp_history",
+    "cn": "盖章记录查询终端",
+    "accent": "#E8C46B",
+    "size": "64x64",
+    "file": "stamp_history_screen.png",
+    "ui": "记录表格（日期 / 口岸 / 章 / 入出）",
+    "note": "唯一的真表格：表头底纹 + 横纵网格线 + 每行一枚迷你章。数据查询类终端的气质与发行类完全不同。",
+    "code": "STAMP LOG"
+  }
+]

@@ -1,11 +1,13 @@
 package com.veriborder.client.screen;
 
 import com.veriborder.client.BetterButton;
+import com.veriborder.client.TemplateDisplay;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
 import com.veriborder.client.ui.CardPanel;
 import com.veriborder.client.ui.DocumentArt;
 import com.veriborder.client.ui.PagedList;
+import com.veriborder.client.ui.PortraitArt;
 import com.veriborder.client.ui.TabStrip;
 import com.veriborder.doc.CredentialCode;
 import com.veriborder.doc.CredentialState;
@@ -134,7 +136,7 @@ public class DocumentViewScreen extends VeriScreen {
         this.integrityOverride = integrityOverride;
         this.serverHistory = history == null ? List.of() : List.copyOf(history);
         this.onBack = onBack;
-        this.accent = doc == null ? Ui.CYAN : doc.accentColor() | 0xFF000000;
+        this.accent = doc == null ? Ui.CYAN : TemplateDisplay.documentTint(doc) | 0xFF000000;
     }
 
     /** Header text for screens that host the viewer (reader, terminal, modifier). */
@@ -166,7 +168,7 @@ public class DocumentViewScreen extends VeriScreen {
     // ------------------------------------------------------------------- build
     @Override
     protected void build() {
-        accent = doc == null ? Ui.CYAN : doc.accentColor() | 0xFF000000;
+        accent = doc == null ? Ui.CYAN : TemplateDisplay.documentTint(doc) | 0xFF000000;
         tabs = TabStrip.at(STRIP_X, STRIP_Y, STRIP_W).size(20, 3);
         tabs.add("identity", Component.translatable("tab.veriborder.identity"));
         tabs.add("mrz", Component.translatable("tab.veriborder.mrz"));
@@ -298,6 +300,11 @@ public class DocumentViewScreen extends VeriScreen {
         }
         // 26.4: the header title is the document title, so a locked/custom name
         // reaches it too; the cover name is only a last-resort fallback.
+        // 26.4.1: the issuing template's own title wins over everything else.
+        String templateTitle = TemplateDisplay.templateTitle(TemplateDisplay.documentTemplate(doc));
+        if (!templateTitle.isBlank()) {
+            return templateTitle;
+        }
         return DocumentTitles.coverLabel(doc.displayName(), doc.coverName());
     }
 
@@ -351,12 +358,38 @@ public class DocumentViewScreen extends VeriScreen {
         int width = content.width();
         boolean passport = doc.kind() == DocumentKind.PASSPORT;
         int photoHeight = passport ? 82 : 96;
-        // 26.4 display fix: the cover plate carries the DOCUMENT title — the
-        // issuer-locked / moderator custom name when there is one, otherwise the
-        // layout name. The holder name is a separate field and is printed on the
-        // row below (doc.name()), never on the cover.
-        DocumentArt.portrait(graphics, font, x, content.y(), width, photoHeight, accent, passport,
-                doc.coverName());
+        // 26.5 portrait: every credential kind prints the holder's real photo
+        // (player skin / shipped preset / uploaded PNG) in exactly this box, so the
+        // viewer shows the same face the border post and the issuing machine do.
+        // A passport used to be excluded here, which is why an issued passport
+        // showed no portrait at all; its cover now keeps the emblem AND reserves a
+        // photo window, so the two no longer exclude each other.
+        String emblem = TemplateDisplay.documentEmblem(doc);
+        String coverTitle = TemplateDisplay.documentTitle(doc);
+        if (passport) {
+            DocumentArt.Slot slot = DocumentArt.passportCover(graphics, font, x, content.y(), width,
+                    photoHeight, accent, emblem, coverTitle, true);
+            if (slot != null) {
+                if (!PortraitArt.draw(graphics, slot.x(), slot.y(), slot.width(), slot.height(), doc,
+                        DocumentArt.coverTone(accent))) {
+                    // No resolvable portrait (unknown preset, an upload the snapshot
+                    // did not carry): keep the window and its geometry, print the
+                    // generic photo placeholder instead of leaving a hole.
+                    DocumentArt.photoPlaceholder(graphics, slot.x(), slot.y(), slot.width(),
+                            slot.height(), DocumentArt.coverTone(accent));
+                }
+            }
+        } else if (!PortraitArt.draw(graphics, x, content.y(), width, photoHeight, doc,
+                DocumentArt.coverTone(accent))) {
+            // 26.4 display fix: the cover plate carries the DOCUMENT title — the
+            // issuer-locked / moderator custom name when there is one, otherwise the
+            // layout name. The holder name is a separate field and is printed on the
+            // row below (doc.name()), never on the cover.
+            // 26.5: the plate is painted with the document's own colour (the template
+            // tint), never with a fixed slate-blue plate.
+            DocumentArt.portrait(graphics, font, x, content.y(), width, photoHeight, accent, false,
+                    coverTitle, emblem);
+        }
         // Barcode + MRZ plate are pinned to the card bottom first. Every text row
         // above is then laid out inside the remaining band, so a long number,
         // nationality or authority can never collide with them (the previous
@@ -444,8 +477,17 @@ public class DocumentViewScreen extends VeriScreen {
                 "Address", doc.address(), Ui.TEXT);
         rightY = CardPanel.keyValue(graphics, font, rightX, rightY, columnWidth, "field.veriborder.issuer_country",
                 "Issuer Country", doc.mrzCountry(), Ui.TEXT);
+        // 26.5 layout row: a template-issued document says so — "自定义版式 · <模板名>"
+        // with the official layout it is built on in the small print underneath, so an
+        // officer can tell a custom credential from the layout it resembles.
         rightY = CardPanel.keyValue(graphics, font, rightX, rightY, columnWidth,
-                Component.translatable("field.veriborder.model"), doc.style().id(), Ui.MUTED);
+                Component.translatable("field.veriborder.model"), TemplateDisplay.layoutRowValue(doc),
+                Ui.MUTED);
+        String layoutNote = TemplateDisplay.layoutRowNote(doc);
+        if (!layoutNote.isBlank()) {
+            graphics.drawString(font, Ui.ellipsis(layoutNote, columnWidth), rightX, rightY, Ui.DIM, false);
+            rightY += 10;
+        }
         rightY = CardPanel.keyValue(graphics, font, rightX, rightY, columnWidth,
                 Component.translatable("field.veriborder.schema"), String.valueOf(doc.copyTag().getInt("schema")),
                 Ui.MUTED);
@@ -698,8 +740,13 @@ public class DocumentViewScreen extends VeriScreen {
         rows.add(new IntegrityCheck(Component.translatable("integrity.veriborder.schema"),
                 Component.translatable("integrity.veriborder.schema.value", schema),
                 schema >= DocumentData.SCHEMA ? STATE_PASS : STATE_WARN));
+        // The signed style itself: "template:<id>" for a custom layout, the official
+        // layout id otherwise. `styleKnown()` verifies the layout underneath, so the
+        // row never reads as a failure just because the style names a template.
+        String signedStyle = doc.copyTag().getString("style").trim();
         rows.add(new IntegrityCheck(Component.translatable("integrity.veriborder.style"),
-                Component.literal(doc.style().id()), doc.styleKnown() ? STATE_PASS : STATE_FAIL));
+                Component.literal(signedStyle.isBlank() ? doc.baseStyleId() : signedStyle),
+                doc.styleKnown() ? STATE_PASS : STATE_FAIL));
         rows.add(new IntegrityCheck(Component.translatable("integrity.veriborder.status"),
                 Component.literal(doc.status().id()), doc.statusKnown() ? STATE_PASS : STATE_WARN));
         boolean coreFields = !doc.name().isBlank() && !doc.number().isBlank();

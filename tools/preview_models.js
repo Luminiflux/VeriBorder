@@ -463,8 +463,9 @@ for (const file of files) {
   if (shapeHashes.has(sig) && !sharedWithEgate) failures.push(`${id}: identical geometry to ${shapeHashes.get(sig)}`);
   else if (!shapeHashes.has(sig)) shapeHashes.set(sig, id);
 
-  const isGate = id === 'egate' || id === 'exit_gate' || id === 'dual_gate'
-    || id === 'egate_open' || id === 'exit_gate_open';
+  // Gates now ship four cap variants (<id>, <id>_left, <id>_right, <id>_both),
+  // so the id test accepts the suffix. Every variant is validated on its own.
+  const isGate = /^(egate|exit_gate|dual_gate)(_[a-z]+)?$/.test(id);
   const isFullCube = els.length === 1 &&
     els[0].from.join(',') === '0,0,0' && els[0].to.join(',') === '16,16,16';
   if (isFullCube) failures.push(`${id}: model is a single full 16^3 cube`);
@@ -482,8 +483,11 @@ for (const file of files) {
   // Round 9 allows standing consoles / full kiosks to be two blocks tall
   // (up to 32 px, see ROUND9_SPEC section 2), so the non-gate vertical bound is
   // 32.5 rather than the old 24.5. Gates keep their own 24 px envelope below.
+  // 26.4: the round-3 gates carry a cantilevered face-recognition screen on a
+  // 4.2 px arm, so the gate envelope is 22.5 px tall instead of 20. It is still
+  // a single-block footprint and the extra height sits well above the door.
   const span = isGate
-    ? { x: [-3.2, 19.2], y: [-0.5, 20.0], z: [-0.5, 17.0] }
+    ? { x: [-3.2, 19.2], y: [-0.5, 22.5], z: [-0.5, 17.0] }
     : { x: [-0.5, 16.5], y: [-0.5, 32.5], z: [-0.5, 16.5] };
 
   for (const [i, el] of els.entries()) {
@@ -499,13 +503,19 @@ for (const file of files) {
       const a = el.rotation.angle;
       if (!['x', 'y', 'z'].includes(el.rotation.axis)) failures.push(`${id}: element ${i} bad rotation axis`);
       if (Math.abs(a) > 45.0001) failures.push(`${id}: element ${i} rotation angle ${a} > 45`);
-      if (Math.abs((a / 22.5) - Math.round(a / 22.5)) > 1e-6) failures.push(`${id}: element ${i} rotation ${a} not a multiple of 22.5`);
+      // 26.4 gates use a real 15 deg slanted reader deck and camera screen, while
+      // station_verifier keeps its legacy 22.5 deg steps, so the accepted grid is
+      // 2.5 deg (a whole number, <= 45) rather than 22.5 only.
+      if (Math.abs((a / 2.5) - Math.round(a / 2.5)) > 1e-6) failures.push(`${id}: element ${i} rotation ${a} not a multiple of 2.5`);
     }
   }
 
   if (isGate) {
-    // Single-block footprint, 1.5-block tall, with a genuinely empty 10 px
-    // central passage (x 3..13) for the renderer's animated door leaves.
+    // Single-block footprint, 1.4-block tall, with a genuinely empty central
+    // passage (x 2.6..13.4, lane 10.8) for the renderer's animated door leaves.
+    // 26.4: cabinets narrowed to 2.6 px per side, and the passage test only
+    // guards the walkable/leaf height - the camera head's cantilever lives above
+    // y = 17.5 and must not trip this.
     const gx1 = Math.min(...els.map(e => e.from[0]));
     const gx2 = Math.max(...els.map(e => e.to[0]));
     const gy1 = Math.min(...els.map(e => e.from[1]));
@@ -513,7 +523,7 @@ for (const file of files) {
     if (gx2 - gx1 < 15) failures.push(`${id}: gate is ${(gx2 - gx1).toFixed(1)} px wide (need >= 15, single block)`);
     if (gy2 - gy1 < 16) failures.push(`${id}: gate is ${(gy2 - gy1).toFixed(1)} px tall (need >= 16)`);
     if (gx2 - gx1 > 22) failures.push(`${id}: gate is ${(gx2 - gx1).toFixed(1)} px wide (shell too wide)`);
-    const clear = { x1: 2.9, y1: 0.9, z1: 0.3, x2: 13.1, y2: 23.0, z2: 15.7 };
+    const clear = { x1: 2.6, y1: 0.9, z1: 0.3, x2: 13.4, y2: 17.5, z2: 15.7 };
     for (const [i, el] of els.entries()) {
       if (el.from[0] < clear.x2 && el.to[0] > clear.x1 &&
           el.from[1] < clear.y2 && el.to[1] > clear.y1 &&
@@ -554,6 +564,35 @@ for (const file of files) {
   });
 }
 
+// ---- extra assembly renders: gates with their swing wings closed -----------
+// The wings are NOT part of the shipped block model (EGateRenderer still
+// animates its own leaves, and the passage rule above must stay strict), so
+// they travel in the .bbmodel with export:false. Rendering the combined model
+// here keeps the static wing placement reviewable.
+const ASM_DIR = path.join(ROOT, 'assets', 'models', '_preview');
+const assemblyRenders = [];
+const EXTRA_VIEWS = [
+  { suffix: '_assembly.json', view: { az: 208, el: 26 } },   // gate + closed swing wings
+  { suffix: '_pair.json', view: { az: 200, el: 22 } },       // two gates butted together
+  { suffix: '_seam.json', view: { az: 205, el: 24 } }        // close-up of the joint
+];
+if (fs.existsSync(ASM_DIR)) {
+  const all = fs.readdirSync(ASM_DIR).sort();
+  for (const { suffix, view } of EXTRA_VIEWS) {
+    for (const f of all.filter(n => n.endsWith(suffix))) {
+      try {
+        const m = JSON.parse(fs.readFileSync(path.join(ASM_DIR, f), 'utf8'));
+        const outName = path.basename(f, '.json') + '.png';
+        const r = renderModel(m, path.join(OUT, outName), view);
+        for (const miss of r.missing) failures.push(`render ${f}: missing texture ${miss}`);
+        assemblyRenders.push({ file: outName, elements: (m.elements || []).length, dims: r.dims });
+      } catch (e) {
+        failures.push(`render ${f}: ${e.message}`);
+      }
+    }
+  }
+}
+
 // ---- blockstate / item model cross-checks
 let bsCount = 0, variantCount = 0;
 for (const file of fs.readdirSync(BS_DIR).filter(f => f.endsWith('.json'))) {
@@ -575,9 +614,36 @@ for (const file of fs.readdirSync(BS_DIR).filter(f => f.endsWith('.json'))) {
     }
   }
   if (id === 'egate' || id === 'exit_gate' || id === 'dual_gate') {
+    // The gates expose facing/left/right/open; open never changes the model (the
+    // leaves are renderer geometry), left/right pick the cap variant.
+    let missing = 0;
     for (const f of ['north', 'east', 'south', 'west']) {
-      for (const o of ['false', 'true']) {
-        if (!variants[`facing=${f},open=${o}`]) failures.push(`blockstate ${id}: missing variant facing=${f},open=${o}`);
+      for (const l of ['false', 'true']) {
+        for (const r of ['false', 'true']) {
+          for (const o of ['false', 'true']) {
+            const key = `facing=${f},left=${l},right=${r},open=${o}`;
+            if (!variants[key]) missing++;
+          }
+        }
+      }
+    }
+    if (missing) failures.push(`blockstate ${id}: ${missing}/32 facing,left,right,open variants missing`);
+    // both open values must resolve to the same model
+    for (const f of ['north', 'east', 'south', 'west']) {
+      for (const l of ['false', 'true']) {
+        for (const r of ['false', 'true']) {
+          const a = variants[`facing=${f},left=${l},right=${r},open=false`];
+          const b = variants[`facing=${f},left=${l},right=${r},open=true`];
+          if (a && b && a.model !== b.model) {
+            failures.push(`blockstate ${id}: open=true changes the model (facing=${f},left=${l},right=${r})`);
+          }
+        }
+      }
+    }
+    for (const suffix of ['', '_left', '_right', '_both']) {
+      const ref = `veriborder:block/${id}${suffix}`;
+      if (!Object.values(variants).some(v => (Array.isArray(v) ? v[0] : v).model === ref)) {
+        failures.push(`blockstate ${id}: no variant uses ${ref}`);
       }
     }
   }
@@ -609,7 +675,21 @@ for (const id of ['exit_gate', 'self_endorsement', 'dual_gate']) {
 }
 if (!fs.existsSync(path.join(ITEM_DIR, 'device_brush.json'))) failures.push('missing required item model device_brush');
 if (!fs.existsSync(path.join(ASSETS, 'textures', 'item', 'device_brush.png'))) failures.push('missing required texture device_brush');
-  if (rows.length !== 22) failures.push(`expected 22 block models (22 devices), found ${rows.length}`);
+
+// No fixed model count any more: gates ship four cap variants, so the population
+// grows by design. Instead every json present is validated on its own merits
+// above, and this list pins the models the game actually references.
+const REQUIRED_MODELS = [
+  'egate', 'egate_left', 'egate_right', 'egate_both',
+  'exit_gate', 'exit_gate_left', 'exit_gate_right', 'exit_gate_both',
+  'dual_gate', 'dual_gate_left', 'dual_gate_right', 'dual_gate_both',
+  'self_endorsement'
+];
+for (const id of REQUIRED_MODELS) {
+  if (!rows.some(r => r.id === id)) failures.push(`missing required model ${id}`);
+}
+const MIN_MODELS = 22;   // 19 single-model devices + the 3 gate shells
+if (rows.length < MIN_MODELS) failures.push(`only ${rows.length} block models (expected at least ${MIN_MODELS})`);
 
 // ---- report
 const lines = [];
@@ -639,8 +719,14 @@ lines.push(`min elements: ${Math.min(...rows.map(r => r.elements))}   unique geo
 lines.push(`distinct light colors: min ${Math.min(...rows.map(r => r.light))}   max ${Math.max(...rows.map(r => r.light))}`);
 const gateRows = rows.filter(r => r.id.startsWith('egate') || r.id.startsWith('exit_gate')
   || r.id.startsWith('dual_gate'));
-lines.push(`gates: ${gateRows.map(g => `${g.id} ${g.bbox} (${g.elements} els, ${g.rotated} rotated)`).join('   ')}   passage: 10 px clear, single-block footprint`);
+lines.push(`gates: ${gateRows.map(g => `${g.id} ${g.bbox} (${g.elements} els, ${g.rotated} rotated)`).join('   ')}   passage: 10.8 px clear (x 2.6..13.4), single-block footprint`);
 lines.push('gate doors: animated in EGateRenderer (two 5 x 12 x 2 px framed glass leaves slide into the pillars on open)');
+if (assemblyRenders.length) {
+  lines.push('assembly renders (model + static swing wings, review only):');
+  for (const a of assemblyRenders) {
+    lines.push(`  tools/preview/${a.file}  ${a.elements} els  ${a.dims.map(n => n.toFixed(1)).join(' x ')}`);
+  }
+}
 
 lines.push('');
 lines.push('CHECKLIST');
@@ -657,8 +743,8 @@ const checks = [
   ['item model parents resolve', !failures.some(f => f.includes('missing parent'))],
   ['all gates keep the lane and are >= 16 px tall', !failures.some(f => f.includes('px wide (need') || f.includes('px tall (need') || f.includes('shell too wide'))],
   ['10 px gate passage is clear', !failures.some(f => f.includes('door passage'))],
-  ['22 models + blockstates + item models + loot', !failures.some(f => f.includes('expected 22') || f.includes('missing required'))],
-  ['egate + exit_gate + dual_gate have 8 facing/open variants', !failures.some(f => f.includes('blockstate egate') || f.includes('blockstate exit_gate') || f.includes('blockstate dual_gate'))]
+  ['every model + blockstate + item model + loot present', !failures.some(f => f.includes('expected 22') || f.includes('missing required') || f.includes('only '))],
+  ['gates have 32 facing,left,right,open variants (open picks no model)', !failures.some(f => f.includes('blockstate egate') || f.includes('blockstate exit_gate') || f.includes('blockstate dual_gate'))]
 ];
 for (const [name, ok] of checks) lines.push(`  [${ok ? 'PASS' : 'FAIL'}] ${name}`);
 lines.push('');

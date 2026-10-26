@@ -70,7 +70,11 @@ public final class DocumentSchema {
             tag.putString("style", DocStyle.CN_ID.id());
         }
         if (!tag.contains("kind", Tag.TAG_STRING)) {
-            tag.putString("kind", DocStyle.byId(tag.getString("style")).kind().name());
+            // 26.4.2: the style may be "template:<id>"; the kind comes from the base
+            // layout the document recorded next to it.
+            tag.putString("kind", DocStyle.byId(DocumentData.baseStyleIdOf(
+                    tag.getString("style"), tag.getString(DocumentData.TEMPLATE_BASE_STYLE)))
+                    .kind().name());
         }
         if (!tag.contains("status", Tag.TAG_STRING)) {
             tag.putString("status", DocumentStatus.VALID.id());

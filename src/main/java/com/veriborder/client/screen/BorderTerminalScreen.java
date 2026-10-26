@@ -2,10 +2,12 @@ package com.veriborder.client.screen;
 
 import com.veriborder.border.BorderTerminalService;
 import com.veriborder.client.BetterButton;
+import com.veriborder.client.TemplateDisplay;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
 import com.veriborder.client.ui.BirthDatePicker;
 import com.veriborder.client.ui.Dropdown;
+import com.veriborder.client.ui.IconPicker;
 import com.veriborder.client.ui.PagedList;
 import com.veriborder.client.ui.TabStrip;
 import com.veriborder.doc.CredentialState;
@@ -116,6 +118,7 @@ public class BorderTerminalScreen extends VeriScreen {
                           String birthDate, String sex, String nationality, String authority, String place,
                           String issueDate, String expiry, boolean permanent, String mrzCountry, String mrz1,
                           String mrz2, boolean integrity, String displayName, String coverName,
+                          String templateId, int tint, String emblem,
                           List<String> codes, List<VisaRow> visas, List<EndorseRow> endorsements,
                           List<StampRow> stamps) {
     }
@@ -498,8 +501,21 @@ public class BorderTerminalScreen extends VeriScreen {
 
         int inner = x + 9;
         int line = cardY + 5;
-        Ui.clipped(graphics, Component.literal(kindText(doc.kind()) + " · " + docTitle(doc)),
-                inner, line, 260, Ui.TEXT);
+        // 26.4.1: a document issued from a registry template shows that template's
+        // colour block and emblem before its title, so an officer can tell two
+        // credentials of the same layout apart at a glance.
+        int titleLeft = inner;
+        String templateTitle = documentTemplateTitle(doc);
+        if (!doc.templateId().isBlank() && !templateTitle.isBlank()) {
+            int tintColor = documentTemplateTint(doc);
+            graphics.fill(inner, line + 1, inner + 10, line + 11, (tintColor & 0x00FFFFFF) | 0xFF000000);
+            graphics.renderOutline(inner, line + 1, 10, 10, 0x99FFFFFF);
+            IconPicker.drawGlyph(graphics, documentTemplateEmblem(doc), inner + 13, line, 11, Ui.GOLD);
+            titleLeft = inner + 28;
+        }
+        String shownTitle = templateTitle.isBlank() ? docTitle(doc) : templateTitle;
+        Ui.clipped(graphics, Component.literal(kindText(doc.kind()) + " · " + shownTitle),
+                titleLeft, line, Math.max(60, x + RIGHT_W - 250 - titleLeft), Ui.TEXT);
         if (doc.custom()) {
             Ui.badge(graphics, inner + 266, line - 1, Component.translatable("document.veriborder.custom"), Ui.CYAN);
         }
@@ -1577,6 +1593,12 @@ public class BorderTerminalScreen extends VeriScreen {
                         entry.getBoolean("integrity"),
                         entry.getString("displayName"),
                         coverName(entry),
+                        // 26.4.1: the template the document was issued from. An older
+                        // server payload simply has no keys here, and the card then
+                        // falls back to the display/official title as before.
+                        entry.getString("templateId"),
+                        entry.getInt("tint"),
+                        entry.getString("emblem"),
                         strings(entry.getList("codes", Tag.TAG_STRING)),
                         parseVisas(entry.getList("visas", Tag.TAG_COMPOUND)),
                         parseEndorsements(entry.getList("endorsements", Tag.TAG_COMPOUND)),
@@ -1800,6 +1822,37 @@ public class BorderTerminalScreen extends VeriScreen {
      */
     private static String docTitle(DocRow doc) {
         return DocumentTitles.coverLabel(doc.coverName(), styleText(doc.style()));
+    }
+
+    /**
+     * 26.4.1 card title: the credential title of the registry template the
+     * document was issued from ("" when the payload carries no template id or the
+     * template has since been deleted).
+     */
+    private static String documentTemplateTitle(DocRow doc) {
+        return TemplateDisplay.templateTitle(TemplateDisplay.template(doc.templateId()));
+    }
+
+    /**
+     * Cover colour of the card: the tint the document recorded, else the tint the
+     * registry snapshot still has for its template, else the base layout's accent.
+     *
+     * <p>26.5: resolved by {@code TemplateDisplay.snapshotTint}, the same chain the
+     * viewer cover, the issuing-machine preview and the item icon use, so a
+     * credential cannot be one colour in the officer's list and another on its own
+     * page.</p>
+     */
+    private static int documentTemplateTint(DocRow doc) {
+        return TemplateDisplay.snapshotTint(doc.tint(), doc.templateId(), doc.style());
+    }
+
+    /** Emblem glyph of the card: the recorded emblem, else the template's. */
+    private static String documentTemplateEmblem(DocRow doc) {
+        if (!doc.emblem().isBlank()) {
+            return IconPicker.normalize(doc.emblem());
+        }
+        String registered = TemplateDisplay.templateEmblem(TemplateDisplay.template(doc.templateId()));
+        return registered.isBlank() ? IconPicker.DEFAULT : registered;
     }
 
     /**

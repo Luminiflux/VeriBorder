@@ -1407,7 +1407,7 @@ public class DeviceBlockEntity extends BlockEntity {
         boolean passed = pendingResult != null && pendingResult.valid();
         setOpen(passed);
         gateState = passed ? GateState.GRANTED : GateState.DENIED;
-        stateTicks = passed ? 110 : 70;
+        stateTicks = passed ? 60 : 70;
         gateMessage = passed ? "gate.veriborder.granted" : "gate.veriborder.denied";
         if (level instanceof ServerLevel serverLevel) {
             // No pass/fail particle burst: the door movement, the status lens and

@@ -45,6 +45,75 @@ public final class DocumentData {
     /** At most this many permanent codes per document. */
     public static final int MAX_PERMANENT_CODES = 16;
 
+    /**
+     * 26.4.1 registry template: id of the template this document was issued from.
+     * Empty on a document issued with a plain official layout. The document
+     * keeps its own copy of the template's look ({@link #TEMPLATE_TINT},
+     * {@link #TEMPLATE_EMBLEM}, {@link #TEMPLATE_TEXTURE}) so deleting a template
+     * never changes a document that was already issued.
+     *
+     * <p>26.4.2: the id is mirrored into the signed style as
+     * {@link #TEMPLATE_STYLE_PREFIX}{@code <id>} — see
+     * {@link #isTemplateStyle()}.</p>
+     */
+    public static final String TEMPLATE_ID = "templateId";
+    /** Signed accent tint of the issuing template; 0 means "use the layout colour". */
+    public static final String TEMPLATE_TINT = "tint";
+    /** Signed preset emblem id of the issuing template. */
+    public static final String TEMPLATE_EMBLEM = "emblem";
+    /** Signed hash of the template's custom cover base map ("" = drawn cover). */
+    public static final String TEMPLATE_TEXTURE = "templateTex";
+    /** Preset emblem used when a document carries none (old documents included). */
+    public static final String DEFAULT_EMBLEM = "emblem";
+    /**
+     * 26.4.2 style identity: a signed {@code style} of the form
+     * {@code template:<templateId>} says "this document was issued from registry
+     * template <id>" instead of naming an official layout.
+     *
+     * <p>Why the style and not just {@link #TEMPLATE_ID}: a viewer that only reads
+     * {@code templateId} still looks the cover up by the layout id, so a document
+     * issued from a Japanese-passport based template kept drawing the Japanese
+     * red cover. The style is the single field every renderer already resolves, so
+     * marking it as a template style is what makes "自定义版式" show up as one.</p>
+     *
+     * <p>The identity is a <em>rendering</em> hint only. The document keeps its own
+     * signed snapshot of the template look ({@link #TEMPLATE_TINT},
+     * {@link #TEMPLATE_EMBLEM}, {@link #TEMPLATE_TEXTURE}), and
+     * {@link #baseStyleId()} still names the official layout underneath — used for
+     * the credential kind, the MRZ, the item model and as the fallback when the
+     * template was deleted. A document issued before 26.4.2 carries a plain layout
+     * id here and behaves exactly as it always did.</p>
+     */
+    public static final String TEMPLATE_STYLE_PREFIX = "template:";
+    /**
+     * 26.4.2: the official layout the template was based on, signed next to
+     * {@code style}.
+     *
+     * <p>{@code template:<id>} names a registry template, not a layout, so the
+     * layout underneath cannot be recovered from the style alone — and it must not
+     * depend on the registry either (a deleted template, a client that never
+     * received the snapshot, a border terminal reading a summary). Storing it on
+     * the document makes {@link #baseStyleId()} a self-contained fallback: kind,
+     * MRZ, item model and cover art keep working forever. Documents issued before
+     * 26.4.2 have no such key and read their style as a plain layout, as always.</p>
+     */
+    public static final String TEMPLATE_BASE_STYLE = "baseStyle";
+
+    /**
+     * 26.4.1 portrait reference: {@code p00}..{@code p23} (built-in preset),
+     * {@code skin} (the holder's player skin, the default) or
+     * {@code custom:<hash>} (an uploaded PNG held by
+     * {@link PortraitLibrary}). Only the reference is signed, never the image.
+     */
+    public static final String PORTRAIT = "portrait";
+    /**
+     * 26.4.1 owner of the portrait: the UUID the {@code skin} reference reads and
+     * the player who uploaded a {@code custom:<hash>} image.
+     */
+    public static final String PORTRAIT_OWNER = "portraitOwner";
+    /** Portrait a document falls back to when it carries none. */
+    public static final String DEFAULT_PORTRAIT = PortraitLibrary.DEFAULT_ID;
+
     /** Clock format of {@link StampRecord#time()}. */
     private static final DateTimeFormatter STAMP_TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 
@@ -132,10 +201,45 @@ public final class DocumentData {
 
     private final CompoundTag tag;
     private DocStyle style;
+    /** Registry template carried by the signed {@code style}, {@code ""} for a plain layout. */
+    private String templateStyleId;
 
     private DocumentData(CompoundTag tag) {
         this.tag = tag;
-        this.style = DocStyle.byId(tag.getString("style"));
+        String rawStyle = tag.getString("style");
+        this.templateStyleId = templateStyleIdOf(rawStyle);
+        // The layout underneath a template style comes from the document's own
+        // recorded base layout: "template:<id>" alone does not name a layout, and
+        // the registry may have deleted the template long ago.
+        this.style = DocStyle.byId(baseStyleIdOf(rawStyle, tag.getString(TEMPLATE_BASE_STYLE)));
+    }
+
+    /**
+     * Template id inside a raw {@code style} value, {@code ""} when the value
+     * names an official layout (or is blank/unknown).
+     */
+    public static String templateStyleIdOf(@Nullable String rawStyle) {
+        String raw = rawStyle == null ? "" : rawStyle.trim();
+        if (!raw.startsWith(TEMPLATE_STYLE_PREFIX)) {
+            return "";
+        }
+        return raw.substring(TEMPLATE_STYLE_PREFIX.length()).trim();
+    }
+
+    /**
+     * Base layout id of a raw {@code style} value.
+     *
+     * <p>A plain layout id is returned unchanged. For {@code template:<id>} the
+     * value only names the template, so the recorded base layout
+     * ({@link #TEMPLATE_BASE_STYLE}) is the answer; {@code ""} when the document
+     * carries none, which callers treat as "no layout recorded".</p>
+     */
+    public static String baseStyleIdOf(@Nullable String rawStyle, @Nullable String recordedBase) {
+        String raw = rawStyle == null ? "" : rawStyle.trim();
+        if (!raw.startsWith(TEMPLATE_STYLE_PREFIX)) {
+            return raw;
+        }
+        return recordedBase == null ? "" : recordedBase.trim();
     }
 
     public static DocumentData createEmpty(DocStyle style) {
@@ -168,6 +272,10 @@ public final class DocumentData {
         // 26.3 registry: every document kind carries the same single issuing-country
         // field. Passports print it in both MRZ lines; IDs/permits just store it.
         tag.putString(ISSUER_COUNTRY, style.mrzCountry());
+        // 26.4.1: a new document carries the default portrait reference ("skin").
+        // The owner key is only written once setPortrait resolves a UUID, so a
+        // blank document stays free of empty strings in its signed payload.
+        tag.putString(PORTRAIT, DEFAULT_PORTRAIT);
         tag.put("visas", new ListTag());
         tag.put("endorsements", new ListTag());
         tag.put("stamps", new ListTag());
@@ -188,7 +296,8 @@ public final class DocumentData {
             tag.putString("style", DocStyle.CN_ID.id());
         }
         if (!tag.contains("kind")) {
-            tag.putString("kind", DocStyle.byId(tag.getString("style")).kind().name());
+            tag.putString("kind", DocStyle.byId(baseStyleIdOf(tag.getString("style"),
+                    tag.getString(TEMPLATE_BASE_STYLE))).kind().name());
         }
         if (!tag.contains("status")) {
             tag.putString("status", DocumentStatus.VALID.id());
@@ -223,6 +332,48 @@ public final class DocumentData {
 
     public DocStyle style() {
         return style;
+    }
+
+    // ------------------------------------------------------ 26.4.2 style identity
+
+    /**
+     * Whether the signed {@code style} names a registry template
+     * ({@code template:<id>}) rather than an official layout.
+     *
+     * <p>{@code false} for every document issued before 26.4.2 and for every
+     * document issued from a plain layout, so old data keeps reading and rendering
+     * exactly as it did.</p>
+     */
+    public boolean isTemplateStyle() {
+        return !templateStyleId.isBlank();
+    }
+
+    /**
+     * Registry template id carried by the style, {@code ""} when the document
+     * carries a plain layout id.
+     *
+     * <p>Read from the signed style itself, so it is available even when the
+     * registry no longer knows the template: a viewer can then still say "this is
+     * a custom layout" and draw the neutral template cover.</p>
+     */
+    public String templateStyleId() {
+        return templateStyleId;
+    }
+
+    /**
+     * Official layout id under the style: the recorded base layout for a
+     * {@code template:<id>} style, the style value itself for a plain layout.
+     *
+     * <p>This is the documented fallback for a template that was deleted or that
+     * the client never received: rendering by {@code baseStyleId()} always works
+     * and never throws, and it is also what the kind, the MRZ and the item model
+     * have always read.</p>
+     */
+    public String baseStyleId() {
+        String base = baseStyleIdOf(tag.getString("style"), tag.getString(TEMPLATE_BASE_STYLE));
+        // "template:" with no usable recorded layout: fall back to the parsed
+        // layout instead of handing the caller an empty id.
+        return base.isBlank() ? style.id() : base;
     }
 
     public DocumentKind kind() {
@@ -375,6 +526,247 @@ public final class DocumentData {
             tag.remove("customIcon");
         } else {
             tag.putString("customIcon", trimmed);
+        }
+        sign();
+    }
+
+    // ------------------------------------------------- 26.4.1 registry template
+
+    /**
+     * Registry template this document was issued from, {@code ""} when it came
+     * straight from an official layout. Old documents simply have no key.
+     */
+    public String templateId() {
+        return tag.getString(TEMPLATE_ID).trim();
+    }
+
+    /** Whether the document was issued from a registry template. */
+    public boolean hasRegistryTemplate() {
+        return !templateId().isBlank();
+    }
+
+    /**
+     * Signed accent tint of the issuing template, masked to {@code 0xRRGGBB}.
+     * {@code 0} means "no tint recorded": use the layout colour
+     * ({@link #effectiveTint()}).
+     */
+    public int tint() {
+        return tag.contains(TEMPLATE_TINT, Tag.TAG_INT) ? tag.getInt(TEMPLATE_TINT) & 0x00FFFFFF : 0;
+    }
+
+    /** Accent colour to draw with: the recorded tint, else the layout's colour. */
+    public int effectiveTint() {
+        int recorded = tint();
+        return recorded != 0 ? recorded : style.accentColor();
+    }
+
+    /**
+     * 26.4.2: ARGB colour of the document's dyed cover plate, or {@code -1} for
+     * "not tinted at all".
+     *
+     * <p>The rule, in one place because the item colour handler, the item
+     * renderer and the viewer must agree:</p>
+     * <ul>
+     *   <li>a signed {@link #tint()} wins;</li>
+     *   <li>{@code tint == 0} means <b>no colour recorded</b> and yields
+     *       {@code -1} — never opaque black ({@code 0xFF000000}, which painted the
+     *       plate black) and never the base layout's accent (which kept a custom
+     *       template looking like the layout it was based on);</li>
+     *   <li>a cover that really owns a colour — a custom cover
+     *       ({@link #customStyle()}) or the 26.4 locked template colour
+     *       ({@link #hasStyleColor()}) — is dyed with {@link #accentColor()}.</li>
+     * </ul>
+     *
+     * <p>{@code DocumentItem.tintColor} hands this value to {@code ItemColors},
+     * where {@code -1} means "leave the texture alone".</p>
+     */
+    public int coverTint() {
+        int rgb = tint();
+        if (rgb == 0) {
+            if (!customStyle() && !hasStyleColor()) {
+                return -1;
+            }
+            rgb = accentColor();
+        }
+        rgb &= 0x00FFFFFF;
+        // A recorded colour of literally 0x000000 is still "no colour": painting a
+        // black plate is exactly the artefact this method must never produce.
+        return rgb == 0 ? -1 : 0xFF000000 | rgb;
+    }
+
+    /** Preset emblem id of the issuing template ({@link #DEFAULT_EMBLEM} fallback). */
+    public String emblem() {
+        String value = tag.getString(TEMPLATE_EMBLEM).trim();
+        return value.isEmpty() ? DEFAULT_EMBLEM : value;
+    }
+
+    /** Hash of the template's custom cover base map, {@code ""} when there is none. */
+    public String templateTex() {
+        return tag.getString(TEMPLATE_TEXTURE).trim();
+    }
+
+    /** Whether the document carries a custom cover base map reference. */
+    public boolean hasTemplateTex() {
+        return !templateTex().isBlank();
+    }
+
+    /**
+     * Writes the whole template snapshot the document keeps for itself. Used by
+     * the issuing machine, which resolves the template server-side; the values
+     * travel in one signed write so a half-applied template cannot be observed.
+     *
+     * <p>26.4.2: the same write also turns the style into
+     * {@code template:<templateId>}, which is what tells every viewer that this
+     * document uses a custom layout instead of the base layout's cover.</p>
+     *
+     * @param tint template accent colour, {@code 0} = keep the layout colour
+     */
+    public void applyRegistryTemplate(String templateId, int tint, String emblem, String templateTex) {
+        String id = templateId == null ? "" : templateId.trim();
+        if (id.isBlank()) {
+            tag.remove(TEMPLATE_ID);
+            tag.remove(TEMPLATE_BASE_STYLE);
+        } else {
+            tag.putString(TEMPLATE_ID, id);
+            // The layout this document is built on, recorded so the style identity
+            // survives the template being deleted from the registry.
+            tag.putString(TEMPLATE_BASE_STYLE, style.id());
+        }
+        this.templateStyleId = id;
+        int color = tint & 0x00FFFFFF;
+        if (color == 0) {
+            tag.remove(TEMPLATE_TINT);
+        } else {
+            tag.putInt(TEMPLATE_TINT, color);
+        }
+        String emblemId = emblem == null ? "" : emblem.trim();
+        if (emblemId.isBlank() || emblemId.equals(DEFAULT_EMBLEM)) {
+            // The default emblem is what every reader falls back to; storing it
+            // would only add a redundant signed key.
+            tag.remove(TEMPLATE_EMBLEM);
+        } else {
+            tag.putString(TEMPLATE_EMBLEM, emblemId);
+        }
+        String texture = templateTex == null ? "" : templateTex.trim();
+        if (texture.isBlank()) {
+            tag.remove(TEMPLATE_TEXTURE);
+        } else {
+            tag.putString(TEMPLATE_TEXTURE, texture);
+        }
+        sign();
+    }
+
+    /** Sets (or clears, when blank) the issuing template id. Signing follows. */
+    public void setTemplateId(String value) {
+        String id = value == null ? "" : value.trim();
+        if (id.isBlank()) {
+            tag.remove(TEMPLATE_ID);
+            tag.remove(TEMPLATE_BASE_STYLE);
+        } else {
+            tag.putString(TEMPLATE_ID, id);
+            tag.putString(TEMPLATE_BASE_STYLE, style.id());
+        }
+        // The style identity follows the template id, so "templateId" and
+        // "style = template:<id>" can never disagree.
+        this.templateStyleId = id;
+        sign();
+    }
+
+    /** Sets (or clears, when 0) the template accent tint. Signing follows. */
+    public void setTint(int tint) {
+        int color = tint & 0x00FFFFFF;
+        if (color == 0) {
+            tag.remove(TEMPLATE_TINT);
+        } else {
+            tag.putInt(TEMPLATE_TINT, color);
+        }
+        sign();
+    }
+
+    /** Sets (or clears, when blank/default) the preset emblem. Signing follows. */
+    public void setEmblem(String emblem) {
+        String id = emblem == null ? "" : emblem.trim();
+        if (id.isBlank() || id.equals(DEFAULT_EMBLEM)) {
+            tag.remove(TEMPLATE_EMBLEM);
+        } else {
+            tag.putString(TEMPLATE_EMBLEM, id);
+        }
+        sign();
+    }
+
+    /** Sets (or clears, when blank) the custom cover base-map hash. Signing follows. */
+    public void setTemplateTex(String hash) {
+        String value = hash == null ? "" : hash.trim();
+        if (value.isBlank()) {
+            tag.remove(TEMPLATE_TEXTURE);
+        } else {
+            tag.putString(TEMPLATE_TEXTURE, value);
+        }
+        sign();
+    }
+
+    /**
+     * Drops every registry-template key (a document re-issued as a plain layout).
+     * The style identity is dropped too, so the document renders as the official
+     * layout it names.
+     */
+    public void clearRegistryTemplate() {
+        tag.remove(TEMPLATE_ID);
+        tag.remove(TEMPLATE_BASE_STYLE);
+        tag.remove(TEMPLATE_TINT);
+        tag.remove(TEMPLATE_EMBLEM);
+        tag.remove(TEMPLATE_TEXTURE);
+        this.templateStyleId = "";
+        sign();
+    }
+
+    // ----------------------------------------------------------- 26.4.1 portrait
+
+    /**
+     * The signed portrait reference: {@code p00}..{@code p23}, {@code skin} or
+     * {@code custom:<hash>}.
+     *
+     * <p>A document issued before 26.4.1 (no key at all), a hand-edited value and
+     * a reference to a deleted upload all read as {@link #DEFAULT_PORTRAIT}, so an
+     * old passport never renders as an empty photo box.</p>
+     */
+    public String portrait() {
+        return PortraitLibrary.normalizeId(tag.getString(PORTRAIT));
+    }
+
+    /**
+     * Signed UUID of the portrait owner: whose skin {@code skin} draws, and who
+     * uploaded a {@code custom:<hash>} image. Empty when the document carries
+     * none, which {@code skin} resolves to the first preset.
+     */
+    public String portraitOwner() {
+        return PortraitLibrary.normalizeOwner(tag.getString(PORTRAIT_OWNER));
+    }
+
+    /** Whether the document carries a non-default portrait reference. */
+    public boolean hasPortrait() {
+        return !DEFAULT_PORTRAIT.equals(portrait());
+    }
+
+    /**
+     * Writes the portrait reference and its owner as one signed edit, so a reader
+     * can never observe a {@code custom:<hash>} reference with a stale owner (or
+     * the other way round).
+     *
+     * <p>A blank or malformed id is stored as {@link #DEFAULT_PORTRAIT}: the field
+     * always reads back as one of the three supported shapes. A blank or malformed
+     * owner removes the key, which is exactly "nobody to read a skin from".</p>
+     *
+     * @param id        {@code p00}..{@code p23} / {@code skin} / {@code custom:<hash>}
+     * @param ownerUuid UUID of the holder or uploader, may be blank
+     */
+    public void setPortrait(String id, String ownerUuid) {
+        tag.putString(PORTRAIT, PortraitLibrary.normalizeId(id));
+        String owner = PortraitLibrary.normalizeOwner(ownerUuid);
+        if (owner.isEmpty()) {
+            tag.remove(PORTRAIT_OWNER);
+        } else {
+            tag.putString(PORTRAIT_OWNER, owner);
         }
         sign();
     }
@@ -537,14 +929,14 @@ public final class DocumentData {
         return name.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
     }
 
+    /**
+     * Whether the style resolves to a real layout. A {@code template:<id>} style
+     * is known through its {@link #baseStyleId() base} layout, so a
+     * template-issued document is never reported as malformed (and a template that
+     * was deleted afterwards does not turn the booklet invalid either).
+     */
     public boolean styleKnown() {
-        String raw = tag.getString("style");
-        for (DocStyle candidate : DocStyle.values()) {
-            if (candidate.id().equals(raw)) {
-                return true;
-            }
-        }
-        return false;
+        return DocStyle.byIdOrNull(baseStyleId()) != null;
     }
 
     public boolean statusKnown() {
@@ -562,6 +954,9 @@ public final class DocumentData {
             throw new IllegalArgumentException("Style kind mismatch");
         }
         this.style = newStyle;
+        // An explicit layout choice replaces the template identity: the document is
+        // no longer "issued from a custom layout", it names that official layout.
+        this.templateStyleId = "";
         tag.putString("style", newStyle.id());
         tag.putString("kind", newStyle.kind().name());
         sign();
@@ -1122,7 +1517,10 @@ public final class DocumentData {
     public void sign() {
         tag.putInt("schema", SCHEMA);
         tag.putString("kind", kind().name());
-        tag.putString("style", style.id());
+        // 26.4.2: the style keeps its template identity through every re-sign, so
+        // editing a stamped/renamed document never silently drops it back to the
+        // base layout cover.
+        tag.putString("style", signedStyle());
         // 26.3 holder signature key, rewritten on every issue/edit so a corrected
         // name or birth date never leaves a stale key behind. A document without
         // a holder name carries no key at all: BorderService then keys it by
@@ -1142,6 +1540,14 @@ public final class DocumentData {
             tag.putString("mrz2", mrz[1]);
         }
         DocumentIntegrity.sign(tag);
+    }
+
+    /**
+     * The {@code style} value this document signs: {@code template:<id>} while the
+     * document is bound to a registry template, the official layout id otherwise.
+     */
+    private String signedStyle() {
+        return templateStyleId.isBlank() ? style.id() : TEMPLATE_STYLE_PREFIX + templateStyleId;
     }
 
     /**

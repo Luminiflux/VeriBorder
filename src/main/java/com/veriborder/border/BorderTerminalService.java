@@ -191,6 +191,14 @@ public final class BorderTerminalService {
             // short cover name in the terminal-opened viewer.
             entry.putString("coverName", doc.coverName());
             entry.putBoolean("customTitle", doc.hasCustomTitle());
+            // 26.4.1: the registry template the document was issued from, so the
+            // terminal card can draw the same tint/emblem as the document itself.
+            // The document keeps its own signed copy, so these values survive the
+            // template being edited or deleted.
+            entry.putString("templateId", doc.templateId());
+            entry.putInt("tint", doc.effectiveTint());
+            entry.putString("emblem", doc.emblem());
+            entry.putString("templateTex", doc.templateTex());
             ListTag codes = new ListTag();
             for (String code : doc.visaFreeCodes()) {
                 codes.add(StringTag.valueOf(code));

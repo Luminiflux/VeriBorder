@@ -1,0 +1,35 @@
+| icon | before | after | non-binary px before | after |
+|---|---|---|---|---|
+| border_terminal | 32x32 | 32x32 | 0 | 0 |
+| config_copy_brush | 16x16 | 32x32 | 178 | 0 |
+| credential_registry | 16x16 | 32x32 | 0 | 0 |
+| custom_id_card | 64x64 | 64x64 | 3 | 0 |
+| custom_passport | 64x64 | 64x64 | 3 | 0 |
+| custom_permit | 64x64 | 64x64 | 3 | 0 |
+| desk_scanner_screen | (new) | 32x32 | - | 0 |
+| device_brush | 32x32 | 32x32 | 0 | 0 |
+| document_modifier | 32x32 | 32x32 | 0 | 0 |
+| dual_gate_brush | 16x16 | 32x32 | 0 | 0 |
+| entry_stamp_screen | (new) | 32x32 | - | 0 |
+| gate_config_brush | 16x16 | 32x32 | 0 | 0 |
+| hk_macao_permit | 64x64 | 64x64 | 0 | 0 |
+| id_card_cn | 64x64 | 64x64 | 0 | 0 |
+| id_card_hk | 64x64 | 64x64 | 0 | 0 |
+| id_issuer_screen | (new) | 32x32 | - | 0 |
+| item_accent_amber | (new) | 32x32 | - | 0 |
+| item_accent_blue | (new) | 32x32 | - | 0 |
+| item_accent_teal | (new) | 32x32 | - | 0 |
+| item_glass | (new) | 32x32 | - | 0 |
+| item_led | (new) | 32x32 | - | 0 |
+| item_panel | (new) | 32x32 | - | 0 |
+| item_paper | (new) | 32x32 | - | 0 |
+| item_shell | (new) | 32x32 | - | 0 |
+| item_trim | (new) | 32x32 | - | 0 |
+| passport_cn | 64x64 | 64x64 | 0 | 0 |
+| passport_hk | 64x64 | 64x64 | 0 | 0 |
+| passport_issuer_screen | (new) | 32x32 | - | 0 |
+| passport_jp | 64x64 | 64x64 | 0 | 0 |
+| passport_mo | 64x64 | 64x64 | 0 | 0 |
+| passport_us | 64x64 | 64x64 | 0 | 0 |
+| permit_issuer_screen | (new) | 32x32 | - | 0 |
+| station_verifier_screen | (new) | 32x32 | - | 0 |

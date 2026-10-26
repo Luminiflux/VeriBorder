@@ -1,0 +1,286 @@
+{
+  "generated": "tools/preview_item_gui.js",
+  "registry": "DeviceBlock.TALL",
+  "devices": [
+    "passport_issuer",
+    "self_visa",
+    "self_endorsement",
+    "airport_checkin",
+    "station_verifier",
+    "blacklist_terminal",
+    "renewal_machine",
+    "entry_stamp",
+    "exit_stamp",
+    "stamp_history",
+    "manual_terminal"
+  ],
+  "zoom": 8,
+  "slotPx": 128,
+  "blockRefPx": 15.73,
+  "reference": {
+    "elements": 1,
+    "height": 16,
+    "guiScale": 0.625,
+    "guiShift": 0,
+    "visualSlotPx": 15.73,
+    "visualBlocks": 1.57,
+    "clipped": false,
+    "missing": []
+  },
+  "guiUnitPx": 10,
+  "rows": [
+    {
+      "id": "passport_issuer",
+      "before": {
+        "elements": 26,
+        "height": 12.75,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 11.11,
+        "visualBlocks": 1.11,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 31,
+        "height": 26.05,
+        "guiScale": 0.38388,
+        "guiShift": -5.03,
+        "visualSlotPx": 11.18,
+        "visualBlocks": 1.12,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "self_visa",
+      "before": {
+        "elements": 26,
+        "height": 10,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 10.06,
+        "visualBlocks": 1.01,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 31,
+        "height": 25.05,
+        "guiScale": 0.3992,
+        "guiShift": -4.53,
+        "visualSlotPx": 11.42,
+        "visualBlocks": 1.14,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "self_endorsement",
+      "before": {
+        "elements": 26,
+        "height": 13.25,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 11.38,
+        "visualBlocks": 1.14,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 31,
+        "height": 26.85,
+        "guiScale": 0.37244,
+        "guiShift": -5.43,
+        "visualSlotPx": 11.17,
+        "visualBlocks": 1.12,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "airport_checkin",
+      "before": {
+        "elements": 20,
+        "height": 10.4,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 10.5,
+        "visualBlocks": 1.05,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 28,
+        "height": 26.4,
+        "guiScale": 0.37879,
+        "guiShift": -5.2,
+        "visualSlotPx": 11.61,
+        "visualBlocks": 1.16,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "station_verifier",
+      "before": {
+        "elements": 22,
+        "height": 8.85,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 9.74,
+        "visualBlocks": 0.97,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 32,
+        "height": 25.4,
+        "guiScale": 0.3937,
+        "guiShift": -4.7,
+        "visualSlotPx": 11.75,
+        "visualBlocks": 1.18,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "blacklist_terminal",
+      "before": {
+        "elements": 20,
+        "height": 9.9,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 10.12,
+        "visualBlocks": 1.01,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 28,
+        "height": 25.2,
+        "guiScale": 0.39683,
+        "guiShift": -4.6,
+        "visualSlotPx": 11.68,
+        "visualBlocks": 1.17,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "renewal_machine",
+      "before": {
+        "elements": 20,
+        "height": 10.9,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 10.77,
+        "visualBlocks": 1.08,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 28,
+        "height": 25.8,
+        "guiScale": 0.3876,
+        "guiShift": -4.9,
+        "visualSlotPx": 11.68,
+        "visualBlocks": 1.17,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "entry_stamp",
+      "before": {
+        "elements": 24,
+        "height": 12.5,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 10.61,
+        "visualBlocks": 1.06,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 29,
+        "height": 23.7,
+        "guiScale": 0.42194,
+        "guiShift": -3.85,
+        "visualSlotPx": 11.23,
+        "visualBlocks": 1.12,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "exit_stamp",
+      "before": {
+        "elements": 24,
+        "height": 12,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 10.34,
+        "visualBlocks": 1.03,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 29,
+        "height": 24.2,
+        "guiScale": 0.41322,
+        "guiShift": -4.1,
+        "visualSlotPx": 11.1,
+        "visualBlocks": 1.11,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "stamp_history",
+      "before": {
+        "elements": 24,
+        "height": 11.5,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 10.07,
+        "visualBlocks": 1.01,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 29,
+        "height": 23.3,
+        "guiScale": 0.42918,
+        "guiShift": -3.65,
+        "visualSlotPx": 11.12,
+        "visualBlocks": 1.11,
+        "clipped": false,
+        "missing": []
+      }
+    },
+    {
+      "id": "manual_terminal",
+      "before": {
+        "elements": 22,
+        "height": 8.6,
+        "guiScale": 0.625,
+        "guiShift": 0,
+        "visualSlotPx": 9.5,
+        "visualBlocks": 0.95,
+        "clipped": false,
+        "missing": []
+      },
+      "after": {
+        "elements": 32,
+        "height": 24.6,
+        "guiScale": 0.4065,
+        "guiShift": -4.3,
+        "visualSlotPx": 11.78,
+        "visualBlocks": 1.18,
+        "clipped": false,
+        "missing": []
+      }
+    }
+  ]
+}

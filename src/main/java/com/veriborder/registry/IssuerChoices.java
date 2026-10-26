@@ -23,8 +23,13 @@ import java.util.function.Function;
  * <p>Pure data, so the merge is unit-tested without a client.</p>
  */
 public final class IssuerChoices {
-    /** Value prefix that distinguishes a registry template from a layout id. */
-    public static final String TEMPLATE_PREFIX = "template:";
+    /**
+     * Value prefix that distinguishes a registry template from a layout id. 26.4.2:
+     * the same prefix is written into the signed style of an issued document
+     * ({@link com.veriborder.doc.DocumentData#TEMPLATE_STYLE_PREFIX}), so the
+     * dropdown value and the document's style identity can never drift apart.
+     */
+    public static final String TEMPLATE_PREFIX = com.veriborder.doc.DocumentData.TEMPLATE_STYLE_PREFIX;
 
     /**
      * One selectable entry.

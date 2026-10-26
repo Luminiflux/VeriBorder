@@ -52,6 +52,8 @@ public final class RegistryReferences {
         DUAL_GATE_BRUSH("dual_gate_brush"),
         DEVICE_ISSUER("device_issuer"),
         TEMPLATE("template"),
+        /** 26.4.1: an issuing machine that locked this template as its layout. */
+        TEMPLATE_LOCK("template_lock"),
         ISSUER_PRESET("issuer_preset");
 
         private final String id;
@@ -231,6 +233,13 @@ public final class RegistryReferences {
         String lockedName = device.lockedDocumentName();
         if (!lockedName.isBlank()) {
             evidence.add(Evidence.template(Kind.ISSUER_PRESET, label, "", lockedName));
+        }
+        // 26.4.1: the machine's locked/selected layout may itself be a registry
+        // template. That is the one reference that still blocks a template delete,
+        // because the machine would silently issue another document afterwards.
+        String lockedStyleTemplate = device.lockedStyleTemplate();
+        if (device.lockStyle() && !lockedStyleTemplate.isBlank()) {
+            evidence.add(Evidence.template(Kind.TEMPLATE_LOCK, label, lockedStyleTemplate, ""));
         }
         ListTag presets = device.presets();
         for (int i = 0; i < presets.size(); i++) {

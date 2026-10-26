@@ -1,6 +1,3 @@
 {
-    "parent":  "minecraft:item/generated",
-    "textures":  {
-                     "layer0":  "veriborder:item/custom_id_card"
-                 }
+    "parent":  "veriborder:item/doc_layers_id_card"
 }

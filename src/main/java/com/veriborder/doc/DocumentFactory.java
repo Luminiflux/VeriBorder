@@ -20,6 +20,18 @@ public final class DocumentFactory {
     public static final String LOCKED_STYLE_COLOR = "lockedStyleColor";
     /** Trusted form key: icon id of the locked registry template. */
     public static final String LOCKED_STYLE_ICON = "lockedStyleIcon";
+    /**
+     * 26.4.1 trusted form keys: the registry template the issuing machine
+     * resolved (id + the document's own snapshot of its look). Only the server
+     * writes them; the applicant form's plain {@code templateId} / {@code tint} /
+     * {@code emblem} / {@code templateTex} keys are never read.
+     */
+    public static final String LOCKED_TEMPLATE_ID = "lockedTemplateId";
+    public static final String LOCKED_TEMPLATE_TINT = "lockedTemplateTint";
+    public static final String LOCKED_TEMPLATE_EMBLEM = "lockedTemplateEmblem";
+    public static final String LOCKED_TEMPLATE_TEX = "lockedTemplateTex";
+    /** Trusted form key: the template's own title, used when nothing names the document. */
+    public static final String LOCKED_TEMPLATE_TITLE = "lockedTemplateTitle";
 
     private DocumentFactory() {
     }
@@ -97,6 +109,12 @@ public final class DocumentFactory {
         String displayName = lockDocumentName
                 ? form.getString(LOCKED_DISPLAY_NAME).trim()
                 : form.getString("displayName").trim();
+        // 26.4.1: the registry template's own title is the next candidate — an
+        // explicit (locked or typed) name always wins, the official layout name
+        // stays the last fallback.
+        if (displayName.isBlank()) {
+            displayName = form.getString(LOCKED_TEMPLATE_TITLE).trim();
+        }
         if (!displayName.isBlank()) {
             data.setDisplayName(displayName);
         }
@@ -110,6 +128,22 @@ public final class DocumentFactory {
         if (!styleIcon.isBlank()) {
             data.setCustomIcon(styleIcon);
         }
+        // 26.4.1: the template snapshot the document keeps for itself. The id is
+        // only written when the server resolved a real template, so a document
+        // never claims a template it was not issued from.
+        String templateId = form.getString(LOCKED_TEMPLATE_ID).trim();
+        if (!templateId.isBlank()) {
+            data.applyRegistryTemplate(templateId,
+                    form.contains(LOCKED_TEMPLATE_TINT) ? form.getInt(LOCKED_TEMPLATE_TINT) : 0,
+                    form.getString(LOCKED_TEMPLATE_EMBLEM),
+                    form.getString(LOCKED_TEMPLATE_TEX));
+        }
+        // 26.4.1 portrait: the reference travels in one signed write with its
+        // owner. The issuing machine has already validated the reference against
+        // the world portrait library, so the factory only normalises it (blank or
+        // unknown -> "skin"), which keeps every document drawable.
+        data.setPortrait(form.getString(DocumentData.PORTRAIT),
+                form.getString(DocumentData.PORTRAIT_OWNER));
         return data;
     }
 

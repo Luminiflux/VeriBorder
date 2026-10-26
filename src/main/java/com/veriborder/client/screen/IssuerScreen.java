@@ -2,11 +2,15 @@ package com.veriborder.client.screen;
 
 import com.veriborder.block.DeviceType;
 import com.veriborder.client.BetterButton;
+import com.veriborder.client.ClientRegistryCache;
+import com.veriborder.client.PortraitFiles;
+import com.veriborder.client.TemplateDisplay;
 import com.veriborder.client.Ui;
 import com.veriborder.client.VeriScreen;
 import com.veriborder.client.ui.BirthDatePicker;
 import com.veriborder.client.ui.Dropdown;
 import com.veriborder.client.ui.PagedList;
+import com.veriborder.client.ui.PortraitArt;
 import com.veriborder.client.ui.TabStrip;
 import com.veriborder.doc.DateUtil;
 import com.veriborder.doc.DocStyle;
@@ -14,11 +18,13 @@ import com.veriborder.doc.DocumentData;
 import com.veriborder.doc.DocumentFactory;
 import com.veriborder.doc.DocumentKind;
 import com.veriborder.doc.EndorsementType;
+import com.veriborder.doc.PortraitLibrary;
 import com.veriborder.doc.VisaType;
 import com.veriborder.network.DeviceActionPacket;
 import com.veriborder.network.ModNetwork;
 import com.veriborder.registry.CredentialRegistryData;
 import com.veriborder.registry.IssuerChoices;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.core.BlockPos;
@@ -48,6 +54,20 @@ public class IssuerScreen extends VeriScreen {
 
     private static final int TAB_STRIP_Y = 44;
     private static final int FOOTER_Y = 352;
+    /**
+     * 26.4.1 portrait row of the applicant page, in design space.
+     *
+     * <p>That page's existing controls end at {@code top + 198} (nationality /
+     * birth pickers) and the live preview card owns {@code top + 216 … top + 328},
+     * so the only free full-width band is the strip between the card and the
+     * {@code top + 352} footer: the row is centred in it and covers
+     * {@code y 331 … 349} — 3px clear of the card artwork above and 3px clear of
+     * the footer buttons below, and horizontally aligned with the page's two
+     * columns (left column {@code x 24} / 214 wide, right column {@code x 266}).
+     */
+    private static final int PORTRAIT_ROW_Y = 331;
+    /** Height of the portrait picker / upload button (matches the footer buttons). */
+    private static final int PORTRAIT_ROW_H = 18;
 
     private final DeviceType device;
     private final BlockPos pos;
@@ -102,6 +122,10 @@ public class IssuerScreen extends VeriScreen {
     private CompoundTag formCache;
     private TabStrip tabs;
     private PagedList<CompoundTag> presetList;
+    /** 26.4.1 portrait picker of the applicant page (null on every other page). */
+    private Dropdown portraitPicker;
+    /** Registry generation the portrait options were built from. */
+    private long portraitRevision = -1;
 
     private EditBox name;
     private EditBox nameLatin;
@@ -161,6 +185,14 @@ public class IssuerScreen extends VeriScreen {
         this.lockStyle = payload.getBoolean("lockStyle") && resolvedStyle != null;
         this.styles = DocStyle.forKind(kind);
         this.style = lockStyle ? resolvedStyle : styles.get(0);
+        // 26.2.1: a machine locked to a registry template must open on that template.
+        // The locked style is only the template's base layout, so reading it alone
+        // made a locked "custom island passport" open as the plain Japanese passport:
+        // base cover, base colour, base name, and no template crest.
+        String lockedTemplateId = payload.getString("lockedStyleTemplate").trim();
+        if (lockStyle && !lockedTemplateId.isEmpty()) {
+            this.selectedTemplateId = lockedTemplateId;
+        }
         String placeValue = payload.getString("lockedPlace").trim();
         this.lockedPlace = placeValue;
         this.lockPlace = payload.getBoolean("lockPlace") && !placeValue.isBlank();
@@ -318,6 +350,11 @@ public class IssuerScreen extends VeriScreen {
         }
         tabs.add("presets", Component.translatable("tab.veriborder.issuer.presets"));
         tabs.setSelected(stripIndex(tab));
+
+        // 26.4.1: the portrait picker only exists on the applicant page, so a page
+        // switch must not leave the previous instance behind (it would be refreshed
+        // against a control that is no longer on screen).
+        portraitPicker = null;
 
         switch (tab) {
             case TAB_DOCUMENT -> buildDocumentTab();
@@ -486,6 +523,126 @@ public class IssuerScreen extends VeriScreen {
                 nationality.setEditable(false);
             }
         }
+        // 26.4.1 portrait row: the photo reference the issued document carries, plus
+        // the photo booth. It lives in the free band between the preview card and the
+        // footer (see PORTRAIT_ROW_Y) and reuses the page's two columns, so no
+        // existing field, picker or button is covered.
+        portraitPicker = addDropdown(Dropdown.at(left + 24, top + PORTRAIT_ROW_Y, 214)
+                .height(PORTRAIT_ROW_H)
+                .prefix(Component.translatable("field.veriborder.portrait").getString() + ": ")
+                .options(portraitOptions())
+                .selected(selectedPortraitId())
+                // The footer buttons sit right below, so a dropped list opens upward.
+                .panelBottom(top + FOOTER_Y - 4)
+                .tooltip(Component.translatable("hint.veriborder.portrait"))
+                .onChange(this::selectPortrait));
+        portraitRevision = ClientRegistryCache.revision();
+        addRenderableWidget(new BetterButton(left + 266, top + PORTRAIT_ROW_Y, 140, PORTRAIT_ROW_H,
+                Component.translatable("button.veriborder.upload_portrait"), button -> uploadPortrait(),
+                Ui.CYAN, true));
+    }
+
+    // ------------------------------------------------------- portrait (26.4.1)
+
+    /**
+     * Every portrait id the picker offers, in display order: the holder's player
+     * skin, the 24 shipped presets, then every uploaded photo the registry
+     * snapshot published to this client.
+     */
+    private List<String> portraitIds() {
+        List<String> ids = new ArrayList<>();
+        ids.add(PortraitLibrary.DEFAULT_ID);
+        ids.addAll(PortraitLibrary.presets());
+        for (ClientRegistryCache.Portrait portrait : ClientRegistryCache.portraits()) {
+            ids.add(portrait.id());
+        }
+        return ids;
+    }
+
+    /** Picker options, always containing the current value so it stays selectable. */
+    private List<Dropdown.Option> portraitOptions() {
+        List<Dropdown.Option> options = new ArrayList<>();
+        for (String id : portraitIds()) {
+            options.add(new Dropdown.Option(id, portraitLabel(id)));
+        }
+        String selected = selectedPortraitId();
+        for (Dropdown.Option option : options) {
+            if (option.id().equals(selected)) {
+                return options;
+            }
+        }
+        // A reference whose photo this client does not hold (the snapshot budget
+        // left it out) or a value carried over from an older form: offer it instead
+        // of blanking the control, so issuing keeps exactly what the form had.
+        options.add(new Dropdown.Option(selected, portraitLabel(selected)));
+        return options;
+    }
+
+    /**
+     * Control label of a portrait id: "player skin", {@code P00}…{@code P23} for a
+     * preset and {@code custom} plus the first six hash characters for an upload
+     * (the whole hash would not fit the closed control).
+     *
+     * <p>26.5: the label itself lives in {@link PortraitArt#label(String)}, so an
+     * option in this control reads exactly like the "photo: …" source line under
+     * the preview card.</p>
+     */
+    private static String portraitLabel(String id) {
+        return PortraitArt.label(id);
+    }
+
+    /** Portrait reference currently on the form ({@code skin} when unset). */
+    private String selectedPortraitId() {
+        return PortraitLibrary.normalizeId(formCache == null
+                ? "" : formCache.getString(DocumentData.PORTRAIT));
+    }
+
+    /** Writes the picked reference into the form cache; {@link #issue()} copies it. */
+    private void selectPortrait(String id) {
+        if (formCache == null) {
+            formCache = defaults();
+        }
+        formCache.putString(DocumentData.PORTRAIT, PortraitLibrary.normalizeId(id));
+    }
+
+    /**
+     * Keeps the picker in step with the registry while the screen stays open: an
+     * upload only becomes selectable once the snapshot carrying its
+     * {@code custom:<hash>} arrives, which is after the button was pressed.
+     */
+    private void refreshPortraitOptions() {
+        if (portraitPicker == null) {
+            return;
+        }
+        long revision = ClientRegistryCache.revision();
+        if (revision == portraitRevision) {
+            return;
+        }
+        portraitRevision = revision;
+        portraitPicker.options(portraitOptions()).selected(selectedPortraitId());
+    }
+
+    /**
+     * Photo booth: uploads the first usable PNG of
+     * {@code config/veriborder/portraits/} for the local player. A folder without a
+     * usable photo sends nothing and says why in chat, so the button is never
+     * silently dead (the server answers every real upload with its own message).
+     */
+    private void uploadPortrait() {
+        if (PortraitFiles.sendFirst(localPlayerUuid())) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft != null && minecraft.player != null) {
+            minecraft.player.displayClientMessage(
+                    Component.translatable("message.veriborder.portrait.none"), false);
+        }
+    }
+
+    /** UUID of the player at this machine, "" when there is none (no world yet). */
+    private static String localPlayerUuid() {
+        Minecraft minecraft = Minecraft.getInstance();
+        return minecraft == null || minecraft.player == null ? "" : minecraft.player.getStringUUID();
     }
 
     /**
@@ -526,11 +683,19 @@ public class IssuerScreen extends VeriScreen {
         List<Dropdown.Option> layouts = new ArrayList<>();
         for (IssuerChoices.Choice choice : IssuerChoices.layoutChoices(kind, registryTemplates,
                 value -> Component.translatable(value.displayNameKey()).getString())) {
-            layouts.add(new Dropdown.Option(choice.value(), choice.label()));
+            // 26.4.1: a registry template is offered under its own credential title
+            // (Chinese / English, following the client language) instead of its
+            // base layout name, so "2026 版香港特别行政区护照" is not shown as
+            // "香港护照" any more.
+            String label = choice.isTemplate()
+                    ? TemplateDisplay.templateTitle(IssuerChoices.resolve(choice.value(), registryTemplates))
+                    : choice.label();
+            layouts.add(new Dropdown.Option(choice.value(), label));
         }
         addDropdown(Dropdown.at(left + 24, top + 84, 230)
                 .options(layouts)
                 .selected(selectedLayoutValue())
+                // 26.2.1: a locked layout only fixes the base layout; a registry template whose base matches it must still be selectable, otherwise a custom template can never be issued from a locked machine.
                 .enabled(!lockStyle)
                 .tooltip(lockStyle ? Component.translatable("hint.veriborder.locked")
                         : Component.translatable("button.veriborder.change_style"))
@@ -815,6 +980,12 @@ public class IssuerScreen extends VeriScreen {
         }
         captureCurrentTab();
         selectedTemplateId = "";
+        // 26.4.1: switching back to a plain layout must also drop the template id
+        // from the form. The server keys the whole template snapshot (title, tint,
+        // emblem, base map) off form.templateId, so leaving it behind would re-apply
+        // the previous template whenever the new plain layout happens to share its
+        // base style. Paired with applyTemplateChoice(), which puts it back.
+        formCache.remove("templateId");
         style = next;
         formCache.putString("style", style.id());
         formCache.putString("authority", style.defaultAuthority());
@@ -1027,8 +1198,11 @@ public class IssuerScreen extends VeriScreen {
         formCache = values.copy();
         formCache.putString("style", style.id());
         // A saved preset is a plain layout, not the registry template that may
-        // have been selected before (26.4).
+        // have been selected before (26.4). 26.4.1: the captured preset could still
+        // carry the template id of whatever was selected when it was saved, so the
+        // key is dropped instead of only clearing the dropdown state.
         selectedTemplateId = "";
+        formCache.remove("templateId");
         sex = formCache.getString("sex").isBlank() ? "M" : formCache.getString("sex");
         if (kind == DocumentKind.PASSPORT) {
             includeVisa = lockIncludeVisa ? lockedIncludeVisa : formCache.getBoolean("includeVisa");
@@ -1082,6 +1256,23 @@ public class IssuerScreen extends VeriScreen {
         CompoundTag data = formCache.copy();
         data.putString("style", style.id());
         data.putString("sex", sex);
+        // 26.4.1 portrait: the reference comes from the picker (form cache) and its
+        // owner is the player standing at the machine, written once so a stored
+        // "skin" reference always knows whose face to resolve. A form that already
+        // carries an owner keeps it.
+        data.putString(DocumentData.PORTRAIT, selectedPortraitId());
+        // 26.2.1: a machine locked to a template never touches the layout dropdown,
+        // so the template id has to be sent explicitly; the server still validates
+        // kind + base layout before it decorates the document.
+        if (!selectedTemplateId.isBlank()) {
+            data.putString("templateId", selectedTemplateId);
+        }
+        if (!data.contains(DocumentData.PORTRAIT_OWNER)) {
+            String owner = localPlayerUuid();
+            if (!owner.isBlank()) {
+                data.putString(DocumentData.PORTRAIT_OWNER, owner);
+            }
+        }
         // The DOCUMENT name lock is still a server payload flag the form mirrors.
         // Number/MRZ/entry/permanent-code policy is device configuration and is
         // resolved server-side from the block entity, never from this form.
@@ -1164,6 +1355,9 @@ public class IssuerScreen extends VeriScreen {
     }
 
     private void renderApplicantTab(GuiGraphics graphics) {
+        // A freshly uploaded photo only reaches this client with the next registry
+        // snapshot; pick it up here so it can be selected without reopening.
+        refreshPortraitOptions();
         DocumentData preview = previewDocument();
         Ui.documentCard(graphics, left + 24, top + 216, 220, 112, preview);
         Ui.clipped(graphics, Component.translatable("screen.veriborder.issuer.hint"), left + 258,
@@ -1176,6 +1370,15 @@ public class IssuerScreen extends VeriScreen {
             Ui.clipped(graphics, Component.translatable("screen.veriborder.terminal.name_locked_hint"),
                     left + 258, top + 274, 238, Ui.AMBER);
         }
+        // 26.5: the photo the preview card shows, and where it came from, so the
+        // operator knows whether a skin, a preset or an upload will be printed.
+        Ui.clipped(graphics, portraitSourceLine(preview), left + 258, top + 292, 238, Ui.DIM);
+    }
+
+    /** "photo: player skin" / "photo: P07" / "photo: custom 3f2a1b". */
+    private static Component portraitSourceLine(DocumentData preview) {
+        return Component.translatable("hint.veriborder.portrait.source",
+                PortraitArt.sourceLabel(preview));
     }
 
     private void renderDocumentTab(GuiGraphics graphics) {
@@ -1193,6 +1396,9 @@ public class IssuerScreen extends VeriScreen {
         }
         Ui.clipped(graphics, Component.translatable("screen.veriborder.terminal.edit_footer"),
                 left + 258, top + 276, 238, Ui.DIM);
+        // The preview card's photo and where it comes from (same line as the
+        // applicant page), so the operator can confirm the portrait before issuing.
+        Ui.clipped(graphics, portraitSourceLine(preview), left + 258, top + 296, 238, Ui.DIM);
     }
 
     private void renderVisaTab(GuiGraphics graphics) {
@@ -1245,9 +1451,21 @@ public class IssuerScreen extends VeriScreen {
     private String effectiveName() {
         String custom = displayName != null ? displayName.getValue() : formCache.getString("displayName");
         if (custom == null || custom.isBlank()) {
+            // 26.4.1: with no custom name the issuing machine prints the selected
+            // template's own title, and only a plain layout falls back to the
+            // official layout name.
+            String templateTitle = selectedTemplateTitle();
+            if (!templateTitle.isBlank()) {
+                return templateTitle;
+            }
             return Component.translatable(style.displayNameKey()).getString();
         }
         return custom.trim();
+    }
+
+    /** Credential title of the registry template currently selected ("" when none). */
+    private String selectedTemplateTitle() {
+        return TemplateDisplay.templateTitle(IssuerChoices.resolve(selectedLayoutValue(), registryTemplates));
     }
 
     /** Preview-only document: never signed or saved, just the live form values. */
@@ -1255,8 +1473,27 @@ public class IssuerScreen extends VeriScreen {
         CompoundTag tag = formCache.copy();
         tag.putString("style", style.id());
         tag.putString("kind", kind.name());
+        // 26.5: the preview card prints the portrait the issued document will carry,
+        // including the owner a "skin" reference reads (the player at this machine),
+        // so the operator sees the photo — and its source — before issuing.
+        tag.putString(DocumentData.PORTRAIT, selectedPortraitId());
+        if (!tag.contains(DocumentData.PORTRAIT_OWNER)) {
+            String owner = localPlayerUuid();
+            if (!owner.isBlank()) {
+                tag.putString(DocumentData.PORTRAIT_OWNER, owner);
+            }
+        }
         if (displayName != null) {
             tag.putString("displayName", displayName.getValue());
+        }
+        // 26.4.1: without a custom name the preview card is titled with the chosen
+        // template's credential title (the document itself gets the same title
+        // server-side from its template id).
+        if (tag.getString("displayName").isBlank()) {
+            String templateTitle = selectedTemplateTitle();
+            if (!templateTitle.isBlank()) {
+                tag.putString("displayName", templateTitle);
+            }
         }
         if (name != null) {
             tag.putString("name", name.getValue());
@@ -1287,6 +1524,37 @@ public class IssuerScreen extends VeriScreen {
         }
         if (address != null) {
             tag.putString("address", address.getValue());
+        }
+        // 26.5 style identity of the preview: the server writes
+        // `style = template:<id>` plus the base layout when it issues from a
+        // template, so the preview must carry the same identity — otherwise the
+        // preview keeps drawing the base layout's cover (a Japanese-passport
+        // template previewed as the plain Japanese passport).
+        // 26.2.1: resolve the template from the explicit selection first. The layout
+        // dropdown value is only a template value while the form still sits on the
+        // template's own base layout, so resolving from the value alone drops the
+        // template as soon as anything else moved the layout - and the preview then
+        // fell back to the base layout's colour (the red Japanese passport).
+        CredentialRegistryData.Template chosen = TemplateDisplay.template(selectedTemplateId);
+        if (chosen == null) {
+            chosen = IssuerChoices.resolve(selectedLayoutValue(), registryTemplates);
+        }
+        if (chosen != null) {
+            int tint = TemplateDisplay.effectiveTint(chosen);
+            String crest = TemplateDisplay.templateEmblem(chosen);
+            String texture = chosen.hasTexture() ? chosen.texture() : "";
+            tag.putString("style", DocumentData.TEMPLATE_STYLE_PREFIX + chosen.id());
+            tag.putString(DocumentData.TEMPLATE_BASE_STYLE, style.id());
+            tag.putString(DocumentData.TEMPLATE_ID, chosen.id());
+            tag.putString(DocumentData.TEMPLATE_EMBLEM, crest);
+            tag.putInt(DocumentData.TEMPLATE_TINT, tint & 0x00FFFFFF);
+            tag.putInt("customColor", tint & 0x00FFFFFF);
+            tag.putString("customIcon", crest);
+            if (texture.isBlank()) {
+                tag.remove(DocumentData.TEMPLATE_TEXTURE);
+            } else {
+                tag.putString(DocumentData.TEMPLATE_TEXTURE, texture);
+            }
         }
         return DocumentData.fromTag(tag);
     }

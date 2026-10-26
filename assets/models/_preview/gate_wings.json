@@ -1,0 +1,458 @@
+{
+  "unit": "model px (1 block = 16)",
+  "thickness": 0.8,
+  "frame_width": 0.8,
+  "glass_thickness": 0.5,
+  "glass_recess": 0.15,
+  "height": [
+    2,
+    13
+  ],
+  "centre_gap": 0.1,
+  "front_hinge_z": 2.2,
+  "rear_hinge_z": 14.2,
+  "front_leaf_z": [
+    1.8,
+    2.6
+  ],
+  "rear_leaf_z": [
+    13.8,
+    14.6
+  ],
+  "clear_between_pairs": 11.2,
+  "clear_blocks": 0.7,
+  "player_width_blocks": 0.6,
+  "clear_slack_blocks": 0.1,
+  "lane_x": [
+    2.6,
+    13.4
+  ],
+  "closed_leaves_x": {
+    "left": [
+      2.6,
+      7.95
+    ],
+    "right": [
+      8.05,
+      13.4
+    ]
+  },
+  "open_angle_deg": 95,
+  "note": "closed leaves stop 0.05 px short of x=8 on each side; both tuck toward the cabinet inner face (x 2.6 / 13.4). Group origins in <id>.bbmodel sit exactly on these hinges. rear hinge 14.2 = 2.2 + 0.8 + 11.2 => clear 11.2 px = 0.7 block, 0.1 block wider than the player.",
+  "gates": {
+    "egate": [
+      {
+        "name": "wing_front_left",
+        "group": "wing_front_left",
+        "hinge_xz": [
+          2.6,
+          2.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": -95,
+        "closed_box": [
+          2.6,
+          2,
+          1.8,
+          7.95,
+          13,
+          2.6
+        ],
+        "glass_box": [
+          3.4,
+          2.8,
+          1.95,
+          7.15,
+          12.2,
+          2.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_front_left_rail_bottom",
+          "wing_front_left_rail_top",
+          "wing_front_left_stile_hinge",
+          "wing_front_left_stile_tip",
+          "wing_front_left_glass"
+        ]
+      },
+      {
+        "name": "wing_front_right",
+        "group": "wing_front_right",
+        "hinge_xz": [
+          13.4,
+          2.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": 95,
+        "closed_box": [
+          8.05,
+          2,
+          1.8,
+          13.4,
+          13,
+          2.6
+        ],
+        "glass_box": [
+          8.85,
+          2.8,
+          1.95,
+          12.6,
+          12.2,
+          2.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_front_right_rail_bottom",
+          "wing_front_right_rail_top",
+          "wing_front_right_stile_hinge",
+          "wing_front_right_stile_tip",
+          "wing_front_right_glass"
+        ]
+      },
+      {
+        "name": "wing_rear_left",
+        "group": "wing_rear_left",
+        "hinge_xz": [
+          2.6,
+          14.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": 95,
+        "closed_box": [
+          2.6,
+          2,
+          13.8,
+          7.95,
+          13,
+          14.6
+        ],
+        "glass_box": [
+          3.4,
+          2.8,
+          13.95,
+          7.15,
+          12.2,
+          14.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_rear_left_rail_bottom",
+          "wing_rear_left_rail_top",
+          "wing_rear_left_stile_hinge",
+          "wing_rear_left_stile_tip",
+          "wing_rear_left_glass"
+        ]
+      },
+      {
+        "name": "wing_rear_right",
+        "group": "wing_rear_right",
+        "hinge_xz": [
+          13.4,
+          14.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": -95,
+        "closed_box": [
+          8.05,
+          2,
+          13.8,
+          13.4,
+          13,
+          14.6
+        ],
+        "glass_box": [
+          8.85,
+          2.8,
+          13.95,
+          12.6,
+          12.2,
+          14.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_rear_right_rail_bottom",
+          "wing_rear_right_rail_top",
+          "wing_rear_right_stile_hinge",
+          "wing_rear_right_stile_tip",
+          "wing_rear_right_glass"
+        ]
+      }
+    ],
+    "exit_gate": [
+      {
+        "name": "wing_front_left",
+        "group": "wing_front_left",
+        "hinge_xz": [
+          2.6,
+          2.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": -95,
+        "closed_box": [
+          2.6,
+          2,
+          1.8,
+          7.95,
+          13,
+          2.6
+        ],
+        "glass_box": [
+          3.4,
+          2.8,
+          1.95,
+          7.15,
+          12.2,
+          2.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_front_left_rail_bottom",
+          "wing_front_left_rail_top",
+          "wing_front_left_stile_hinge",
+          "wing_front_left_stile_tip",
+          "wing_front_left_glass"
+        ]
+      },
+      {
+        "name": "wing_front_right",
+        "group": "wing_front_right",
+        "hinge_xz": [
+          13.4,
+          2.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": 95,
+        "closed_box": [
+          8.05,
+          2,
+          1.8,
+          13.4,
+          13,
+          2.6
+        ],
+        "glass_box": [
+          8.85,
+          2.8,
+          1.95,
+          12.6,
+          12.2,
+          2.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_front_right_rail_bottom",
+          "wing_front_right_rail_top",
+          "wing_front_right_stile_hinge",
+          "wing_front_right_stile_tip",
+          "wing_front_right_glass"
+        ]
+      },
+      {
+        "name": "wing_rear_left",
+        "group": "wing_rear_left",
+        "hinge_xz": [
+          2.6,
+          14.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": 95,
+        "closed_box": [
+          2.6,
+          2,
+          13.8,
+          7.95,
+          13,
+          14.6
+        ],
+        "glass_box": [
+          3.4,
+          2.8,
+          13.95,
+          7.15,
+          12.2,
+          14.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_rear_left_rail_bottom",
+          "wing_rear_left_rail_top",
+          "wing_rear_left_stile_hinge",
+          "wing_rear_left_stile_tip",
+          "wing_rear_left_glass"
+        ]
+      },
+      {
+        "name": "wing_rear_right",
+        "group": "wing_rear_right",
+        "hinge_xz": [
+          13.4,
+          14.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": -95,
+        "closed_box": [
+          8.05,
+          2,
+          13.8,
+          13.4,
+          13,
+          14.6
+        ],
+        "glass_box": [
+          8.85,
+          2.8,
+          13.95,
+          12.6,
+          12.2,
+          14.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_rear_right_rail_bottom",
+          "wing_rear_right_rail_top",
+          "wing_rear_right_stile_hinge",
+          "wing_rear_right_stile_tip",
+          "wing_rear_right_glass"
+        ]
+      }
+    ],
+    "dual_gate": [
+      {
+        "name": "wing_front_left",
+        "group": "wing_front_left",
+        "hinge_xz": [
+          2.6,
+          2.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": -95,
+        "closed_box": [
+          2.6,
+          2,
+          1.8,
+          7.95,
+          13,
+          2.6
+        ],
+        "glass_box": [
+          3.4,
+          2.8,
+          1.95,
+          7.15,
+          12.2,
+          2.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_front_left_rail_bottom",
+          "wing_front_left_rail_top",
+          "wing_front_left_stile_hinge",
+          "wing_front_left_stile_tip",
+          "wing_front_left_glass"
+        ]
+      },
+      {
+        "name": "wing_front_right",
+        "group": "wing_front_right",
+        "hinge_xz": [
+          13.4,
+          2.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": 95,
+        "closed_box": [
+          8.05,
+          2,
+          1.8,
+          13.4,
+          13,
+          2.6
+        ],
+        "glass_box": [
+          8.85,
+          2.8,
+          1.95,
+          12.6,
+          12.2,
+          2.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_front_right_rail_bottom",
+          "wing_front_right_rail_top",
+          "wing_front_right_stile_hinge",
+          "wing_front_right_stile_tip",
+          "wing_front_right_glass"
+        ]
+      },
+      {
+        "name": "wing_rear_left",
+        "group": "wing_rear_left",
+        "hinge_xz": [
+          2.6,
+          14.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": 95,
+        "closed_box": [
+          2.6,
+          2,
+          13.8,
+          7.95,
+          13,
+          14.6
+        ],
+        "glass_box": [
+          3.4,
+          2.8,
+          13.95,
+          7.15,
+          12.2,
+          14.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_rear_left_rail_bottom",
+          "wing_rear_left_rail_top",
+          "wing_rear_left_stile_hinge",
+          "wing_rear_left_stile_tip",
+          "wing_rear_left_glass"
+        ]
+      },
+      {
+        "name": "wing_rear_right",
+        "group": "wing_rear_right",
+        "hinge_xz": [
+          13.4,
+          14.2
+        ],
+        "open_rotation_axis": "y",
+        "open_rotation_deg": -95,
+        "closed_box": [
+          8.05,
+          2,
+          13.8,
+          13.4,
+          13,
+          14.6
+        ],
+        "glass_box": [
+          8.85,
+          2.8,
+          13.95,
+          12.6,
+          12.2,
+          14.45
+        ],
+        "thickness": 0.8,
+        "elements": [
+          "wing_rear_right_rail_bottom",
+          "wing_rear_right_rail_top",
+          "wing_rear_right_stile_hinge",
+          "wing_rear_right_stile_tip",
+          "wing_rear_right_glass"
+        ]
+      }
+    ]
+  }
+}

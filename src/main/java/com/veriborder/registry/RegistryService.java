@@ -3,6 +3,7 @@ package com.veriborder.registry;
 import com.veriborder.api.OpenScreenEvent;
 import com.veriborder.doc.DocStyle;
 import com.veriborder.doc.DocumentKind;
+import com.veriborder.doc.PortraitLibrary;
 import com.veriborder.network.ModNetwork;
 import com.veriborder.network.OpenDevicePacket;
 import net.minecraft.core.BlockPos;
@@ -47,6 +48,14 @@ public final class RegistryService {
     public static final String ACTION_RECODE_COUNTRY = "registry_recode_country";
     public static final String ACTION_SAVE_TEMPLATE = "registry_save_template";
     public static final String ACTION_DELETE_TEMPLATE = "registry_delete_template";
+    /** 26.4.1: uploads one custom cover base map ({@code hash} + base64 {@code png}). */
+    public static final String ACTION_UPLOAD_TEXTURE = "registry_upload_texture";
+    /**
+     * 26.4.1 document portrait upload: {@code {png(base64), owner(uuid)}}. Sent by
+     * the photo booth (an issuing machine) or an operator; the accepted reply is
+     * the {@code custom:<hash>} id of the stored image.
+     */
+    public static final String ACTION_UPLOAD_PORTRAIT = "registry_upload_portrait";
 
     private RegistryService() {
     }
@@ -183,6 +192,22 @@ public final class RegistryService {
             sendSnapshot(player, registry);
             return true;
         }
+        if (ACTION_UPLOAD_PORTRAIT.equals(action)) {
+            // 26.4.1: the photo booth is an ordinary issuing machine, so this one
+            // action is deliberately not OP-gated — otherwise a traveller could
+            // never hand in their own photo. It stays safe because the payload is
+            // content-addressed and bounded by PortraitLibrary (real PNG, 32/64
+            // square, 16 KiB, 32 slots), and a caller without OP level 2 may only
+            // store a portrait for their own UUID.
+            WriteOutcome portraitOutcome = uploadPortrait(player, registry, data);
+            if (portraitOutcome.changed()) {
+                syncAll(server);
+            }
+            // No editor is opened: the uploader keeps whatever screen it is on and
+            // learns the new id from the chat reply plus the refreshed snapshot.
+            sendSnapshot(player, registry);
+            return true;
+        }
         if (!reopensEditor(action)) {
             // 26.4 fix: the open editor listens to this snapshot and refreshes its
             // lists in place. Re-opening the editor here reset the page to
@@ -207,6 +232,7 @@ public final class RegistryService {
             // same key travels back in the editor payload for the GUI footer.
             case ACTION_SAVE_TEMPLATE -> outcome = saveTemplate(player, registry, data);
             case ACTION_DELETE_TEMPLATE -> outcome = deleteTemplate(player, server, registry, data);
+            case ACTION_UPLOAD_TEXTURE -> outcome = uploadTexture(player, registry, data);
             default -> outcome = WriteOutcome.of(false);
         }
         if (outcome.changed()) {
@@ -217,6 +243,12 @@ public final class RegistryService {
             syncAll(server);
         }
         sendSnapshot(player, registry);
+        if (ACTION_UPLOAD_TEXTURE.equals(action)) {
+            // 26.4.1: an upload is not a form save. The open editor refreshes its
+            // base-map strip from the snapshot; re-opening it would throw away the
+            // template draft the operator is still editing.
+            return true;
+        }
         // 26.4 fix: the reopened editor keeps the page it was on and receives the
         // concrete reason (plus the refused form) when the write failed.
         sendEditor(player, registry, outcome.template(), outcome.errorKey(),
@@ -235,7 +267,7 @@ public final class RegistryService {
 
     /** Page of the registry editor an action belongs to. */
     public static String editorTabFor(@Nullable String action) {
-        return action != null && action.contains("template")
+        return action != null && (action.contains("template") || action.contains("texture"))
                 ? "templates" : "countries";
     }
 
@@ -467,11 +499,17 @@ public final class RegistryService {
         // 26.4 fix: log exactly what arrived, so a "needs a name" report can be
         // traced to an empty client payload instead of a server-side guess.
         LOGGER.info("registry template save request: id='{}' kind='{}' name='{}' style='{}' "
-                        + "mrzCountry='{}' color={} icon='{}'",
+                        + "mrzCountry='{}' color={} icon='{}' titleZh='{}' titleEn='{}' tint={} "
+                        + "emblem='{}' texture='{}'",
                 rawId, rawKind, rawName, rawStyle,
                 data == null ? "" : data.getString("mrzCountry"),
                 data == null ? 0 : data.getInt("color"),
-                data == null ? "" : data.getString("icon"));
+                data == null ? "" : data.getString("icon"),
+                data == null ? "" : data.getString("titleZh"),
+                data == null ? "" : data.getString("titleEn"),
+                data == null ? 0 : data.getInt("tint"),
+                data == null ? "" : data.getString("emblem"),
+                data == null ? "" : data.getString("texture"));
         DocumentKind kind = DocumentKind.byIdOrNull(rawKind);
         if (kind == null) {
             LOGGER.info("registry template save refused: unknown kind '{}'", rawKind);
@@ -482,7 +520,9 @@ public final class RegistryService {
             return new PreparedTemplate(TemplateSaveStatus.MISSING_NAME, null, false);
         }
         CredentialRegistryData.Template raw = new CredentialRegistryData.Template(rawId, kind, rawName, rawStyle,
-                data.getString("mrzCountry"), "", "", data.getInt("color"), data.getString("icon"));
+                data.getString("mrzCountry"), "", "", data.getInt("color"), data.getString("icon"),
+                data.getString("titleZh"), data.getString("titleEn"), data.getInt("tint"),
+                data.getString("emblem"), data.getString("texture"));
         CredentialRegistryData.Template normalized = raw.normalized();
         boolean corrected = !raw.style().equals(normalized.style());
         LOGGER.info("registry template save normalised: id='{}' kind={} name='{}' style='{}' corrected={}",
@@ -519,6 +559,14 @@ public final class RegistryService {
             message(player, errorKey);
             return WriteOutcome.failed(errorKey, data);
         }
+        // 26.4.1: the base-map reference must point at a stored cover. An unknown
+        // hash is dropped (the template is still saved, its cover falls back to the
+        // drawn one) instead of failing the whole edit.
+        if (!template.texture().isBlank() && !registry.hasTexture(template.texture())) {
+            LOGGER.info("registry template '{}' references unknown texture '{}': dropped",
+                    template.id(), template.texture());
+            template = template.withTexture("");
+        }
         if (!registry.upsertTemplate(template)) {
             message(player, "message.veriborder.registry.full");
             return WriteOutcome.failed("message.veriborder.registry.full", data);
@@ -544,27 +592,153 @@ public final class RegistryService {
     }
 
     /**
-     * 26.3 round 12: a template an issuing machine still uses (its locked document
-     * name or a saved preset) is not removed.
+     * 26.4.1 template deletion.
+     *
+     * <p>An issued document carries its own snapshot of the template (id, tint,
+     * emblem, base-map hash, title), so documents no longer block the delete —
+     * they keep their look and fall back gracefully. What <b>does</b> block it is
+     * an issuing machine that locked the template as its layout, because that
+     * machine would silently issue a different document afterwards.</p>
+     *
+     * <p>A blank or unknown id is a concrete error (never a silent success), and a
+     * successful delete releases the base-map slot the template occupied.</p>
      */
     private static WriteOutcome deleteTemplate(ServerPlayer player, MinecraftServer server,
                                                CredentialRegistryData registry, CompoundTag data) {
-        String id = data.getString("id");
+        String id = data.getString("id").trim();
+        if (id.isBlank()) {
+            message(player, "message.veriborder.registry.template_missing_id");
+            return WriteOutcome.failed("message.veriborder.registry.template_missing_id", data);
+        }
         CredentialRegistryData.Template template = registry.template(id);
         if (template == null) {
-            return WriteOutcome.of(false);
+            message(player, "message.veriborder.registry.template_not_found", id);
+            return WriteOutcome.failed("message.veriborder.registry.template_not_found", data);
         }
-        List<RegistryReferences.Ref> refs = RegistryReferences.forTemplate(
-                RegistryReferences.collect(server, registry), template.id(), template.name());
-        if (!refs.isEmpty()) {
-            message(player, "message.veriborder.registry.template_in_use", template.name(),
-                    Component.translatable(refs.get(0).kindKey()));
-            return WriteOutcome.refused();
+        // Only a machine that locked/selected this template as its layout counts;
+        // documents, presets and locked document names do not (26.4.1).
+        int lockCount = templateLockCount(RegistryReferences.collect(server, registry), template.id());
+        if (lockCount > 0) {
+            message(player, "message.veriborder.registry.template_locked", template.name(), lockCount);
+            return WriteOutcome.failed("message.veriborder.registry.template_locked", data);
         }
-        return WriteOutcome.of(registry.removeTemplate(template.id()));
+        if (!registry.removeTemplate(template.id())) {
+            message(player, "message.veriborder.registry.template_not_found", id);
+            return WriteOutcome.failed("message.veriborder.registry.template_not_found", data);
+        }
+        int released = registry.releaseUnusedTextures();
+        LOGGER.info("registry template deleted: id='{}' name='{}' releasedTextures={}",
+                template.id(), template.name(), released);
+        return WriteOutcome.of(true);
+    }
+
+    /**
+     * 26.4.1 pure delete gate: how many issuing machines currently lock this
+     * template as their layout.
+     *
+     * <p>An issued document keeps its own signed snapshot of the template (id,
+     * tint, emblem, base map, title), so documents — and the locked document
+     * names / saved presets that only borrow its name — are deliberately not
+     * counted: deleting the template must never change a document that is already
+     * in someone's pocket. What still blocks the delete is a machine that would
+     * silently issue a different document afterwards.</p>
+     */
+    public static int templateLockCount(@Nullable java.util.Collection<RegistryReferences.Evidence> evidence,
+                                        @Nullable String templateId) {
+        String id = templateId == null ? "" : templateId.trim();
+        if (id.isEmpty() || evidence == null) {
+            return 0;
+        }
+        int count = 0;
+        for (RegistryReferences.Evidence item : evidence) {
+            if (item != null && item.kind() == RegistryReferences.Kind.TEMPLATE_LOCK
+                    && id.equals(item.templateId())) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * 26.4.1 custom cover upload: {@code {hash, png}} where {@code png} is the
+     * base64 payload. Every limit (PNG, 64x64, 8 KiB, 16 slots) is enforced by
+     * {@link CredentialRegistryData#putTextureChecked}; a refusal is reported with
+     * its concrete reason, never silently dropped.
+     */
+    private static WriteOutcome uploadTexture(ServerPlayer player, CredentialRegistryData registry,
+                                              CompoundTag data) {
+        byte[] png = decodeBase64(data.getString("png"));
+        CredentialRegistryData.TextureResult result =
+                registry.putTextureChecked(data.getString("hash"), png);
+        if (!result.ok()) {
+            String errorKey = result.errorKey();
+            LOGGER.info("registry texture upload refused: reason={} hash='{}' bytes={}",
+                    result.rejection(), result.hash(), png == null ? 0 : png.length);
+            message(player, errorKey);
+            return WriteOutcome.failed(errorKey, null);
+        }
+        LOGGER.info("registry texture uploaded: hash='{}' bytes={} stored={}",
+                result.hash(), png == null ? 0 : png.length, registry.textureHashes().size());
+        message(player, "message.veriborder.registry.texture_saved");
+        return WriteOutcome.of(true);
+    }
+
+    /**
+     * 26.4.1 portrait upload: {@code {png, owner}} where {@code png} is the base64
+     * payload. {@link PortraitLibrary#put(byte[])} enforces every limit (real PNG,
+     * 32 or 64 square, 16 KiB, 32 portraits), so a forged packet can neither grow
+     * the save file nor smuggle a non-image into the client renderer.
+     *
+     * <p>The owner records who handed the photo in (the {@code skin} reference
+     * reads it, a {@code custom:<hash>} document keeps it as provenance). A caller
+     * without OP level 2 can only claim their own UUID.</p>
+     */
+    private static WriteOutcome uploadPortrait(ServerPlayer player, CredentialRegistryData registry,
+                                               CompoundTag data) {
+        byte[] png = decodeBase64(data.getString("png"));
+        String owner = PortraitLibrary.normalizeOwner(data.getString("owner"));
+        if (!player.hasPermissions(2) || owner.isEmpty()) {
+            owner = PortraitLibrary.normalizeOwner(player.getStringUUID());
+        }
+        PortraitLibrary.PortraitResult result = registry.putPortrait(png);
+        if (!result.ok()) {
+            String errorKey = result.errorKey();
+            LOGGER.info("portrait upload refused by '{}': reason={} bytes={}",
+                    player.getGameProfile().getName(), result.rejection(),
+                    png == null ? 0 : png.length);
+            message(player, errorKey);
+            return WriteOutcome.failed(errorKey, null);
+        }
+        LOGGER.info("portrait uploaded by '{}': id='{}' owner='{}' bytes={} stored={}",
+                player.getGameProfile().getName(), result.id(), owner,
+                png == null ? 0 : png.length, registry.portraits().size());
+        // The accepted reply is the id the client writes onto the document.
+        message(player, "message.veriborder.portrait.uploaded", result.id());
+        return WriteOutcome.of(true);
+    }
+
+    @Nullable
+    private static byte[] decodeBase64(@Nullable String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.util.Base64.getDecoder().decode(value.trim());
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ reads
+
+    /**
+     * 26.4.1 portrait library of the server's world, or {@code null} when there is
+     * no server (client-side call from a screen that only has a document).
+     */
+    @Nullable
+    public static PortraitLibrary portraits(@Nullable MinecraftServer server) {
+        return server == null ? null : CredentialRegistryData.get(server).portraits();
+    }
 
     /** Country list for an issuer payload / client cache. */
     public static ListTag countriesTag(@Nullable MinecraftServer server) {
@@ -589,6 +763,7 @@ public final class RegistryService {
         if (server == null) {
             payload.put("countries", new ListTag());
             payload.put("templates", new ListTag());
+            payload.put(PortraitLibrary.KEY, new ListTag());
             return payload;
         }
         CredentialRegistryData registry = CredentialRegistryData.get(server);
@@ -600,6 +775,11 @@ public final class RegistryService {
             }
         }
         payload.put("templates", templates);
+        // 26.4.1: the photo booth's portrait picker needs the uploaded portraits
+        // next to the countries and templates, so it does not have to wait for a
+        // registry snapshot to show the photos a traveller can pick from.
+        payload.put(PortraitLibrary.KEY,
+                registry.portraits().snapshot().getList(PortraitLibrary.KEY, Tag.TAG_COMPOUND));
         return payload;
     }
 

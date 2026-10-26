@@ -1,4 +1,4 @@
-﻿const fs=require('fs'),path=require('path'),zlib=require('zlib');
+const fs=require('fs'),path=require('path'),zlib=require('zlib');
 function readPng(file){const buf=fs.readFileSync(file);let pos=8,w=0,h=0,color=0;const idat=[];
  while(pos<buf.length){const len=buf.readUInt32BE(pos);const type=buf.toString('ascii',pos+4,pos+8);const data=buf.subarray(pos+8,pos+8+len);pos+=12+len;
   if(type==='IHDR'){w=data.readUInt32BE(0);h=data.readUInt32BE(4);color=data[9];}else if(type==='IDAT')idat.push(data);else if(type==='IEND')break;}

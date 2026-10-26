@@ -3,6 +3,7 @@ package com.veriborder.registry;
 import com.veriborder.doc.DocStyle;
 import com.veriborder.doc.DocumentData;
 import com.veriborder.doc.DocumentKind;
+import com.veriborder.doc.PortraitLibrary;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
@@ -29,7 +30,10 @@ import java.util.Map;
  * <pre>
  * schema     int
  * countries  ListTag  {code, nameZh, nameEn, defaultNationality, note}
- * templates  ListTag  {id, kind, name, style, mrzCountry, locks, issuers, color, icon}
+ * templates  ListTag  {id, kind, name, style, mrzCountry, locks, issuers, color, icon,
+ *                      titleZh, titleEn, tint, emblem, texture}
+ * textures   ListTag  {hash, data}   // custom cover base map, base64 PNG (26.4.1)
+ * portraits  ListTag  {hash, data}   // uploaded portrait, base64 PNG (26.4.1)
  * </pre>
  *
  * <p>A country code is exactly three letters {@code A-Z}; it is unique and
@@ -52,6 +56,36 @@ public final class CredentialRegistryData extends SavedData {
     public static final int MAX_ICON_ID_LENGTH = 32;
     /** Icon used when a template does not pick one from the preset grid. */
     public static final String DEFAULT_ICON = "emblem";
+    /** 26.4.1: preset emblem a template falls back to (same id as the default icon). */
+    public static final String DEFAULT_EMBLEM = "emblem";
+    /**
+     * 26.4.2: the neutral card colour a template is saved with when the operator
+     * picked no colour at all.
+     *
+     * <p>Storing {@code 0} for both {@code tint} and {@code color} meant "follow
+     * the layout", which the issuing machine copied onto the document as "no
+     * tint" — so a custom template rendered as its base layout's cover (a
+     * Japanese-passport template stayed red) and, once the zero value reached the
+     * item colour handler, could even paint a black plate. A saved template
+     * therefore always carries a colour of its own; this neutral light grey is
+     * what "no colour chosen" means.</p>
+     */
+    public static final int DEFAULT_TEMPLATE_TINT = 0xE6E8EA;
+    public static final int MAX_EMBLEM_LENGTH = 32;
+    /** Custom cover base-map hash: lowercase hex, bounded like a digest. */
+    public static final int MAX_TEXTURE_HASH_LENGTH = 64;
+    /** One uploaded cover base map: at most 64x64 pixels, 8 KiB of PNG. */
+    public static final int MAX_TEXTURE_DIMENSION = 64;
+    public static final int MAX_TEXTURE_BYTES = 8192;
+    /** At most this many distinct cover base maps live in the registry. */
+    public static final int MAX_TEXTURES = 16;
+    /**
+     * 26.4.1 snapshot budget: the base64 payload of all textures travels inside
+     * one registry snapshot, so it is capped at 128 KiB (one 8 KiB PNG is roughly
+     * 11 KiB base64). Textures that would overflow the budget are left out of the
+     * snapshot, never out of the save file.
+     */
+    public static final int MAX_SNAPSHOT_TEXTURE_CHARS = 128 * 1024;
     /** Registry entries are bounded so a forged payload cannot grow the save file. */
     public static final int MAX_COUNTRIES = 512;
     public static final int MAX_TEMPLATES = 256;
@@ -113,9 +147,21 @@ public final class CredentialRegistryData extends SavedData {
      * that kind's own issuing machine ({@link DocumentKind#issuerId()}).</p>
      */
     public record Template(String id, DocumentKind kind, String name, String style, String mrzCountry,
-                           String locks, String issuers, int color, String icon) {
+                           String locks, String issuers, int color, String icon,
+                           String titleZh, String titleEn, int tint, String emblem, String texture) {
         public static final Template EMPTY = new Template("", DocumentKind.PASSPORT, "", "",
                 "", "", "", 0xFFFFFF, DEFAULT_ICON);
+
+        /**
+         * Pre-26.4.1 form (nine components). The 26.4.1 template definition fields
+         * take their defaults: no own title (the name is used), the layout's accent
+         * colour as tint, the preset emblem and no custom base map.
+         */
+        public Template(String id, DocumentKind kind, String name, String style, String mrzCountry,
+                        String locks, String issuers, int color, String icon) {
+            this(id, kind, name, style, mrzCountry, locks, issuers, color, icon,
+                    "", "", 0, DEFAULT_EMBLEM, "");
+        }
 
         public Template {
             id = trim(id, MAX_TEMPLATE_ID_LENGTH);
@@ -129,6 +175,76 @@ public final class CredentialRegistryData extends SavedData {
             if (icon.isBlank()) {
                 icon = DEFAULT_ICON;
             }
+            titleZh = trim(titleZh, MAX_NAME_LENGTH);
+            titleEn = trim(titleEn, MAX_NAME_LENGTH);
+            // The tint is stored raw — 0 alone would mean "the original layout's
+            // colour", which keeps a template following its layout if the layout
+            // palette changes. A template with NO colour at all (both fields 0) is
+            // the case that used to break issuing: it is saved with the neutral
+            // default instead of 0, so a saved template always has a colour.
+            tint &= 0x00FFFFFF;
+            if (tint == 0 && (color & 0x00FFFFFF) == 0) {
+                tint = DEFAULT_TEMPLATE_TINT;
+            }
+            emblem = trim(emblem, MAX_EMBLEM_LENGTH);
+            if (emblem.isBlank()) {
+                emblem = DEFAULT_EMBLEM;
+            }
+            texture = normalizeTextureHash(texture);
+        }
+
+        /**
+         * The template's own credential title in the requested language, falling
+         * back to the other language and finally to {@link #name()}.
+         */
+        public String title(boolean chinese) {
+            if (chinese) {
+                if (!titleZh.isBlank()) {
+                    return titleZh;
+                }
+                return titleEn.isBlank() ? name : titleEn;
+            }
+            if (!titleEn.isBlank()) {
+                return titleEn;
+            }
+            return titleZh.isBlank() ? name : titleZh;
+        }
+
+        /** Whether the template carries a title of its own (not just {@link #name()}). */
+        public boolean hasOwnTitle() {
+            return !titleZh.isBlank() || !titleEn.isBlank();
+        }
+
+        /**
+         * Accent colour actually used for the cover: the configured tint, then the
+         * template's older {@code color} field (a template saved before 26.4.1 has
+         * no tint at all), and finally the original layout's accent colour.
+         *
+         * <p>26.4.2: the fallback chain is kept for snapshots written by older
+         * builds, but a template this build saves always carries
+         * {@link #DEFAULT_TEMPLATE_TINT} at worst, so the result is never 0 for a
+         * stored template.</p>
+         */
+        public int effectiveTint() {
+            if (tint != 0) {
+                return tint;
+            }
+            if ((color & 0x00FFFFFF) != 0) {
+                return color & 0x00FFFFFF;
+            }
+            DocStyle layout = DocStyle.byIdOrNull(style);
+            return layout == null ? 0 : layout.accentColor();
+        }
+
+        /** Whether the template uses an uploaded base map instead of the drawn one. */
+        public boolean hasTexture() {
+            return !texture.isBlank();
+        }
+
+        /** Copy of this template carrying another base-map hash ({@code ""} clears it). */
+        public Template withTexture(@Nullable String hash) {
+            return new Template(id, kind, name, style, mrzCountry, locks, issuers, color, icon,
+                    titleZh, titleEn, tint, emblem, hash);
         }
 
         /**
@@ -163,7 +279,8 @@ public final class CredentialRegistryData extends SavedData {
             }
             List<DocStyle> styles = DocStyle.forKind(kind);
             String fallback = styles.isEmpty() ? "" : styles.get(0).id();
-            return new Template(id, kind, name, fallback, mrzCountry, locks, issuers, color, icon);
+            return new Template(id, kind, name, fallback, mrzCountry, locks, issuers, color, icon,
+                    titleZh, titleEn, tint, emblem, texture);
         }
 
         /**
@@ -193,6 +310,12 @@ public final class CredentialRegistryData extends SavedData {
             }
             out.putInt("customColor", color);
             out.putString("customIcon", icon);
+            // 26.4.1: the form also names the template it was filled from, so the
+            // issue path can resolve the template's own title/tint/emblem/texture
+            // server-side instead of trusting the client's copies of them.
+            if (!id.isBlank()) {
+                out.putString("templateId", id);
+            }
             return out;
         }
 
@@ -207,6 +330,13 @@ public final class CredentialRegistryData extends SavedData {
             tag.putString("issuers", issuers);
             tag.putInt("color", color);
             tag.putString("icon", icon);
+            // 26.4.1 template definition. The new keys are always written so a
+            // snapshot is self-describing; readers of older snapshots fall back.
+            tag.putString("titleZh", titleZh);
+            tag.putString("titleEn", titleEn);
+            tag.putInt("tint", tint);
+            tag.putString("emblem", emblem);
+            tag.putString("texture", texture);
             return tag;
         }
 
@@ -217,12 +347,22 @@ public final class CredentialRegistryData extends SavedData {
             return new Template(tag.getString("id"), DocumentKind.byId(tag.getString("kind")),
                     tag.getString("name"), tag.getString("style"), tag.getString("mrzCountry"),
                     tag.getString("locks"), tag.getString("issuers"), tag.getInt("color"),
-                    tag.getString("icon"));
+                    tag.getString("icon"), tag.getString("titleZh"), tag.getString("titleEn"),
+                    tag.getInt("tint"), tag.getString("emblem"), tag.getString("texture"));
         }
     }
 
     private final Map<String, Country> countries = new LinkedHashMap<>();
     private final Map<String, Template> templates = new LinkedHashMap<>();
+    /** 26.4.1 custom cover base maps, keyed by their lowercase hex hash. */
+    private final Map<String, byte[]> textures = new LinkedHashMap<>();
+    /**
+     * 26.4.1 portrait library: the uploaded document portraits. It lives here so
+     * the images travel inside the registry snapshot every client already
+     * receives, and are persisted next to the registry's own data (no second
+     * {@code SavedData} file, no extra packet and no protocol change).
+     */
+    private final PortraitLibrary portraits = new PortraitLibrary();
 
     public CredentialRegistryData() {
     }
@@ -255,6 +395,21 @@ public final class CredentialRegistryData extends SavedData {
                 data.templates.put(template.id(), template);
             }
         }
+        // 26.4.1: the custom cover base maps stored next to the templates. A row
+        // is re-validated on load, so a hand-edited save file cannot smuggle an
+        // oversized or non-PNG payload into the registry.
+        ListTag textureList = tag.getList("textures", Tag.TAG_COMPOUND);
+        for (int i = 0; i < textureList.size() && data.textures.size() < MAX_TEXTURES; i++) {
+            CompoundTag row = textureList.getCompound(i);
+            byte[] png = decodeBase64(row.getString("data"));
+            if (png != null) {
+                data.putTextureChecked(row.getString("hash"), png);
+            }
+        }
+        // 26.4.1: uploaded portraits. {@link PortraitLibrary#readFrom} re-validates
+        // every row (PNG signature, 32/64 square, 16 KiB) and silently skips the
+        // rest, so a hand-edited save cannot load an oversized payload.
+        data.portraits.readFrom(tag);
         return data;
     }
 
@@ -271,6 +426,12 @@ public final class CredentialRegistryData extends SavedData {
             templateList.add(template.toTag());
         }
         tag.put("templates", templateList);
+        // The save file always keeps every base map; only the wire snapshot is
+        // budgeted (see MAX_SNAPSHOT_TEXTURE_CHARS).
+        writeTextures(tag, false);
+        // 26.4.1: the save file keeps every uploaded portrait too; the snapshot
+        // below is the budgeted copy.
+        portraits.writeTo(tag);
         return tag;
     }
 
@@ -358,7 +519,8 @@ public final class CredentialRegistryData extends SavedData {
             }
             templates.put(template.id(), new Template(template.id(), template.kind(), template.name(),
                     template.style(), to, template.locks(), template.issuers(), template.color(),
-                    template.icon()));
+                    template.icon(), template.titleZh(), template.titleEn(), template.tint(),
+                    template.emblem(), template.texture()));
         }
         setDirty();
         return true;
@@ -471,7 +633,303 @@ public final class CredentialRegistryData extends SavedData {
             templateList.add(template.toTag());
         }
         tag.put("templates", templateList);
+        // 26.4.1: base maps travel as base64 inside the same snapshot, capped so a
+        // registry full of 64x64 covers can never blow past a packet budget.
+        writeTextures(tag, true);
+        // 26.4.1: uploaded portraits ride along as {portraits: [{hash, data}]},
+        // budgeted to 256 KiB of base64 so one sync stays a single small packet.
+        CompoundTag portraitSnapshot = portraits.snapshot();
+        tag.put(PortraitLibrary.KEY, portraitSnapshot.getList(PortraitLibrary.KEY, Tag.TAG_COMPOUND));
         return tag;
+    }
+
+    // --------------------------------------------------------------- portraits
+
+    /** 26.4.1 portrait library of this world (presets plus uploaded images). */
+    public PortraitLibrary portraits() {
+        return portraits;
+    }
+
+    /**
+     * Stores one uploaded portrait and marks the registry dirty so it is written
+     * to disk. Limits stay in {@link PortraitLibrary#put(byte[])}.
+     */
+    public PortraitLibrary.PortraitResult putPortrait(@Nullable byte[] png) {
+        PortraitLibrary.PortraitResult result = portraits.put(png);
+        if (result.stored()) {
+            setDirty();
+        }
+        return result;
+    }
+
+    /** Removes one uploaded portrait by id or hash; returns whether it existed. */
+    public boolean removePortrait(@Nullable String id) {
+        boolean removed = portraits.remove(id);
+        if (removed) {
+            setDirty();
+        }
+        return removed;
+    }
+
+    // ---------------------------------------------------------------- textures
+
+    /** Why an uploaded cover base map was refused (26.4.1). */
+    public enum TextureRejection {
+        /** Accepted. */
+        NONE(""),
+        EMPTY("empty"),
+        NOT_PNG("not_png"),
+        TOO_LARGE("too_large"),
+        TOO_WIDE("too_wide"),
+        TOO_TALL("too_tall"),
+        TOO_MANY("too_many"),
+        BAD_HASH("bad_hash");
+
+        private final String id;
+
+        TextureRejection(String id) {
+            this.id = id;
+        }
+
+        public String id() {
+            return id;
+        }
+
+        /** Translation key of the refusal, rendered by the registry editor. */
+        public String messageKey() {
+            return "message.veriborder.registry.texture_" + id;
+        }
+    }
+
+    /**
+     * Outcome of one upload.
+     *
+     * @param stored    whether the base map is now in the registry (a duplicate
+     *                  hash counts as stored: it is already there)
+     * @param rejection concrete refusal reason, {@link TextureRejection#NONE} on success
+     * @param hash      normalised hash of the stored (or offered) base map
+     */
+    public record TextureResult(boolean stored, TextureRejection rejection, String hash) {
+        public boolean ok() {
+            return stored;
+        }
+
+        /** Translation key of the refusal, {@code ""} when the upload was accepted. */
+        public String errorKey() {
+            return rejection == null || rejection == TextureRejection.NONE ? "" : rejection.messageKey();
+        }
+    }
+
+    /** Stored base-map hashes, registration order. */
+    public List<String> textureHashes() {
+        return new ArrayList<>(textures.keySet());
+    }
+
+    /** Copy of every stored base map (hash → PNG bytes). */
+    public Map<String, byte[]> textures() {
+        Map<String, byte[]> copy = new LinkedHashMap<>();
+        textures.forEach((hash, png) -> copy.put(hash, png.clone()));
+        return copy;
+    }
+
+    /** The stored base map behind {@code hash}, or {@code null}. */
+    @Nullable
+    public byte[] texture(@Nullable String hash) {
+        byte[] png = textures.get(normalizeTextureHash(hash));
+        return png == null ? null : png.clone();
+    }
+
+    public boolean hasTexture(@Nullable String hash) {
+        return textures.containsKey(normalizeTextureHash(hash));
+    }
+
+    /**
+     * Stores one custom cover base map (26.4.1).
+     *
+     * <p>Limits, all enforced here so a forged packet cannot grow the save file:
+     * the payload must be a real PNG, at most {@link #MAX_TEXTURE_BYTES} bytes,
+     * at most {@link #MAX_TEXTURE_DIMENSION}×{@link #MAX_TEXTURE_DIMENSION}
+     * pixels, and the registry holds at most {@link #MAX_TEXTURES} of them. A
+     * blank hash is derived from the content; re-uploading the same hash is a
+     * no-op (deduplicated), which is what makes one base map shareable by
+     * several templates.</p>
+     *
+     * @return {@code true} when the base map is stored (or already was)
+     */
+    public boolean putTexture(String hash, byte[] png) {
+        return putTextureChecked(hash, png).stored();
+    }
+
+    /** {@link #putTexture(String, byte[])} with the concrete refusal reason. */
+    public TextureResult putTextureChecked(@Nullable String hash, byte[] png) {
+        String provided = hash == null ? "" : hash.trim();
+        String normalized = normalizeTextureHash(provided);
+        if (!provided.isEmpty() && normalized.isEmpty()) {
+            // A malformed hash is refused instead of being silently replaced by a
+            // different one: the caller must know which base map it now owns.
+            return new TextureResult(false, TextureRejection.BAD_HASH, "");
+        }
+        if (png == null || png.length == 0) {
+            return new TextureResult(false, TextureRejection.EMPTY, normalized);
+        }
+        int[] size = pngSize(png);
+        if (size == null) {
+            return new TextureResult(false, TextureRejection.NOT_PNG, normalized);
+        }
+        if (png.length > MAX_TEXTURE_BYTES) {
+            return new TextureResult(false, TextureRejection.TOO_LARGE, normalized);
+        }
+        if (size[0] > MAX_TEXTURE_DIMENSION) {
+            return new TextureResult(false, TextureRejection.TOO_WIDE, normalized);
+        }
+        if (size[1] > MAX_TEXTURE_DIMENSION) {
+            return new TextureResult(false, TextureRejection.TOO_TALL, normalized);
+        }
+        if (normalized.isBlank()) {
+            normalized = hashOf(png);
+        }
+        if (normalized.isBlank()) {
+            return new TextureResult(false, TextureRejection.BAD_HASH, "");
+        }
+        if (textures.containsKey(normalized)) {
+            // Same content hash already stored: share it instead of duplicating.
+            return new TextureResult(true, TextureRejection.NONE, normalized);
+        }
+        if (textures.size() >= MAX_TEXTURES) {
+            return new TextureResult(false, TextureRejection.TOO_MANY, normalized);
+        }
+        textures.put(normalized, png.clone());
+        setDirty();
+        return new TextureResult(true, TextureRejection.NONE, normalized);
+    }
+
+    /** Removes one base map. Returns whether anything was stored under that hash. */
+    public boolean removeTexture(@Nullable String hash) {
+        boolean removed = textures.remove(normalizeTextureHash(hash)) != null;
+        if (removed) {
+            setDirty();
+        }
+        return removed;
+    }
+
+    /**
+     * Drops every base map no template points at any more (26.4.1 "释放槽位").
+     * Called after a template is deleted so the freed slot can be reused.
+     *
+     * @return how many base maps were released
+     */
+    public int releaseUnusedTextures() {
+        java.util.Set<String> used = new java.util.HashSet<>();
+        for (Template template : templates.values()) {
+            if (template.hasTexture()) {
+                used.add(template.texture());
+            }
+        }
+        int before = textures.size();
+        textures.keySet().removeIf(hash -> !used.contains(hash));
+        if (textures.size() != before) {
+            setDirty();
+        }
+        return before - textures.size();
+    }
+
+    /** Writes the texture rows as {@code {hash, data(base64)}}. */
+    private void writeTextures(CompoundTag tag, boolean budgeted) {
+        ListTag list = new ListTag();
+        int chars = 0;
+        for (Map.Entry<String, byte[]> entry : textures.entrySet()) {
+            String base64 = java.util.Base64.getEncoder().encodeToString(entry.getValue());
+            if (budgeted && chars + base64.length() > MAX_SNAPSHOT_TEXTURE_CHARS) {
+                // Out of the wire budget: the save file keeps it, the snapshot
+                // simply does not carry it.
+                break;
+            }
+            chars += base64.length();
+            CompoundTag row = new CompoundTag();
+            row.putString("hash", entry.getKey());
+            row.putString("data", base64);
+            list.add(row);
+        }
+        tag.put("textures", list);
+    }
+
+    /**
+     * Dimensions of a PNG payload, or {@code null} when the bytes are not a PNG.
+     *
+     * <p>Read straight out of the IHDR chunk (signature + {@code IHDR} + width +
+     * height) instead of {@code ImageIO}, so the check is pure, fast and works in
+     * a headless unit test — decoding an attacker's image is exactly what must
+     * not happen here.</p>
+     */
+    @Nullable
+    public static int[] pngSize(@Nullable byte[] png) {
+        if (png == null || png.length < 24) {
+            return null;
+        }
+        int[] signature = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+        for (int i = 0; i < signature.length; i++) {
+            if ((png[i] & 0xFF) != signature[i]) {
+                return null;
+            }
+        }
+        if (png[12] != 'I' || png[13] != 'H' || png[14] != 'D' || png[15] != 'R') {
+            return null;
+        }
+        int width = intAt(png, 16);
+        int height = intAt(png, 20);
+        if (width <= 0 || height <= 0) {
+            return null;
+        }
+        return new int[]{width, height};
+    }
+
+    private static int intAt(byte[] data, int offset) {
+        return ((data[offset] & 0xFF) << 24) | ((data[offset + 1] & 0xFF) << 16)
+                | ((data[offset + 2] & 0xFF) << 8) | (data[offset + 3] & 0xFF);
+    }
+
+    /** SHA-256 of a payload as lowercase hex (the default base-map hash). */
+    public static String hashOf(@Nullable byte[] data) {
+        if (data == null || data.length == 0) {
+            return "";
+        }
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(data);
+            StringBuilder builder = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                builder.append(String.format("%02x", b));
+            }
+            return builder.toString();
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 unavailable", exception);
+        }
+    }
+
+    /**
+     * A base-map hash is lowercase hex, at most {@link #MAX_TEXTURE_HASH_LENGTH}
+     * characters; anything else becomes "" (and is then derived from the bytes).
+     */
+    public static String normalizeTextureHash(@Nullable String value) {
+        if (value == null) {
+            return "";
+        }
+        String cleaned = value.trim().toLowerCase(Locale.ROOT);
+        if (cleaned.length() > MAX_TEXTURE_HASH_LENGTH || !cleaned.matches("[0-9a-f]+")) {
+            return "";
+        }
+        return cleaned;
+    }
+
+    @Nullable
+    private static byte[] decodeBase64(@Nullable String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return java.util.Base64.getDecoder().decode(value.trim());
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
     }
 
     // ---------------------------------------------------------------- helpers
@@ -518,7 +976,8 @@ public final class CredentialRegistryData extends SavedData {
         }
         return new Template(deriveTemplateId(template.kind(), template.name()), template.kind(),
                 template.name(), template.style(), template.mrzCountry(), template.locks(),
-                template.issuers(), template.color(), template.icon());
+                template.issuers(), template.color(), template.icon(), template.titleZh(),
+                template.titleEn(), template.tint(), template.emblem(), template.texture());
     }
 
     private static String trim(String value, int max) {

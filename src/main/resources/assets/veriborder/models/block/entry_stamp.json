@@ -7,7 +7,7 @@
     "silver_dark": "veriborder:block/r9_silver_dark_v2",
     "glass": "veriborder:block/r9_glass",
     "dark": "veriborder:block/r9_dark",
-    "screen": "veriborder:block/r9_screen_ui",
+    "screen": "veriborder:block/entry_stamp_screen",
     "led": "veriborder:block/r9_led_green",
     "accent": "veriborder:block/entry_stamp_accent",
     "label": "veriborder:block/entry_stamp_label",

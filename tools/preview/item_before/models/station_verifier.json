@@ -1,0 +1,4 @@
+{
+    "parent":  "veriborder:block/station_verifier",
+    "gui_light":  "front"
+}

@@ -41,7 +41,14 @@ public class RegistrySnapshotPacket {
     public void handle(Supplier<NetworkEvent.Context> context) {
         NetworkEvent.Context ctx = context.get();
         ctx.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(Dist.CLIENT,
-                () -> () -> ClientRegistryCache.update(data)));
+                () -> () -> {
+                    ClientRegistryCache.update(data);
+                    // 26.4.1: the snapshot also carries the custom cover base maps
+                    // (hash + base64 PNG). They are uploaded into the eight dynamic
+                    // item textures right after the cache is refreshed, so an item
+                    // never renders a cover the client has not received yet.
+                    com.veriborder.client.render.TemplateSlotTextures.update(data);
+                }));
         ctx.setPacketHandled(true);
     }
 }

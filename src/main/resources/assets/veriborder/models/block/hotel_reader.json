@@ -7,7 +7,7 @@
     "silver_dark": "veriborder:block/r9_silver_dark_v2",
     "glass": "veriborder:block/r9_glass",
     "dark": "veriborder:block/r9_dark",
-    "screen": "veriborder:block/r9_screen_ui",
+    "screen": "veriborder:block/hotel_reader_screen",
     "led_green": "veriborder:block/r9_led_green",
     "led_red": "veriborder:block/r9_led_red",
     "label": "veriborder:block/hotel_reader_label",

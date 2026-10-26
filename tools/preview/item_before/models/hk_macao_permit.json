@@ -1,0 +1,14 @@
+{
+    "parent":  "minecraft:item/generated",
+    "textures":  {
+                     "layer0":  "veriborder:item/hk_macao_permit"
+                 },
+    "overrides":  [
+                      {
+                          "predicate":  {
+                                            "custom_model_data":  100
+                                        },
+                          "model":  "veriborder:item/custom_permit"
+                      }
+                  ]
+}

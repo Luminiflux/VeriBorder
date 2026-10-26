@@ -1,0 +1,25 @@
+item previews -> C:\Users\GhostBubbles\Documents\deepseek-harness\default-workspace\VeriBorder\tools\preview\item_before\render
+id                       kind  els  tex  icon     parent
+---------------------------------------------------------------
+airport_checkin         3d     20   10  -        veriborder:block/airport_checkin
+blacklist_terminal      3d     19   10  -        veriborder:block/blacklist_terminal
+desk_scanner            3d     16   10  -        veriborder:block/desk_scanner
+device_brush            2d      0    1  32x32    minecraft:item/handheld
+endorsement_machine     3d     23    9  -        veriborder:block/endorsement_machine
+entry_stamp             3d     31   12  -        veriborder:block/entry_stamp
+exit_stamp              3d     31   12  -        veriborder:block/exit_stamp
+hotel_reader            3d     17   10  -        veriborder:block/hotel_reader
+id_issuer               3d     24    9  -        veriborder:block/id_issuer
+loss_terminal           3d     17   10  -        veriborder:block/loss_terminal
+manual_terminal         3d     17   10  -        veriborder:block/manual_terminal
+passport_issuer         3d     23   10  -        veriborder:block/passport_issuer
+permit_issuer           3d     22   10  -        veriborder:block/permit_issuer
+print_preview           3d     23   11  -        veriborder:block/print_preview
+renewal_machine         3d     23   10  -        veriborder:block/renewal_machine
+self_endorsement        3d     25    9  -        veriborder:block/self_endorsement
+self_visa               3d     20   10  -        veriborder:block/self_visa
+stamp_history           3d     24   11  -        veriborder:block/stamp_history
+station_verifier        3d     20   10  -        veriborder:block/station_verifier
+visa_issuer             3d     21   10  -        veriborder:block/visa_issuer
+
+models: 20   2d: 1   3d: 19

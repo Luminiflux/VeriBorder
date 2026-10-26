@@ -577,77 +577,15 @@ if (-not $NoDocuments) {
     New-CustomDocTexture 'custom_permit' $false $true
 }
 
-# modifier icon
-$bmp, $g = New-BitmapSmooth 32 32
-$g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-$shadow = Brush (C 0 0 0 100); $g.FillRectangle($shadow, 4, 6, 24, 20); $shadow.Dispose()
-$grad = [System.Drawing.Drawing2D.LinearGradientBrush]::new([System.Drawing.Rectangle]::new(3, 5, 24, 20), (C 30 47 68), (C 18 27 40), 45)
-$g.FillRectangle($grad, 3, 5, 24, 20); $grad.Dispose()
-$p = Pen (C 220 185 100) 1.4; $g.DrawRectangle($p, 3, 5, 24, 20); $p.Dispose()
-Fill-Rect $g 6 9 10 3 (C 120 200 220)
-Fill-Rect $g 6 14 8 2 (C 100 160 190)
-Fill-Rect $g 6 18 11 2 (C 100 160 190)
-$p = Pen (C 220 185 100) 2.4
-$g.DrawLine($p, 19, 9, 25, 17); $g.DrawLine($p, 25, 17, 22, 20); $g.DrawLine($p, 22, 20, 16, 14)
-$p.Dispose()
-$b = Brush (C 220 185 100); $g.FillEllipse($b, 18, 7, 4, 4); $g.FillEllipse($b, 22, 18, 4, 4); $b.Dispose()
-Save-Bitmap $bmp $g (Join-Path $itemTex 'document_modifier.png')
-
-# ---- device brush icon (config brush: handle + ferrule + bristles) --------
-$bristleDark = C 23 116 110
-$bristleMid = C 43 186 172
-$bristleLight = C 143 250 238
-$metalDark = C 74 88 98
-$metal = C 201 214 222
-$metalLight = C 241 248 252
-$goldBrush = C 229 199 107
-$woodDark = C 66 43 22
-$wood = C 178 124 64
-$woodLight = C 214 160 92
-$woodDeep = C 132 86 40
-$brBmp, $brG = New-Bitmap 32 32
-# bristle fan: widening rows with a serrated top edge
-for ($row = 0; $row -lt 8; $row++) {
-    $half = 6 + [int][Math]::Floor($row * 0.5)
-    $x0 = 16 - $half
-    $w = $half * 2
-    Fill-Rect $brG $x0 (3 + $row) $w 1 $bristleDark
-    Fill-Rect $brG ($x0 + 1) (3 + $row) ($w - 2) 1 $bristleMid
-    for ($i = 0; $i -lt ($w - 3); $i += 3) {
-        Fill-Rect $brG ($x0 + 2 + $i) (3 + $row) 1 1 $bristleLight
-    }
-}
-for ($i = 0; $i -lt 7; $i++) {
-    $x = 8 + $i * 2
-    Fill-Rect $brG $x 1 1 2 $bristleDark
-    Fill-Rect $brG $x 1 1 1 $bristleLight
-}
-# metal ferrule with rivets
-Fill-Rect $brG 8 10 16 4 $metalDark
-Fill-Rect $brG 9 11 14 2 $metal
-Fill-Rect $brG 9 11 14 1 $metalLight
-Fill-Rect $brG 10 12 3 1 $metalLight
-Fill-Rect $brG 19 12 3 1 $metalLight
-Fill-Rect $brG 9 14 14 1 $goldBrush
-# tapered wooden handle
-for ($row = 0; $row -lt 15; $row++) {
-    $y = 15 + $row
-    $inset = if ($row -ge 11) { 1 } else { 0 }
-    $x1 = 12 + $inset
-    $x2 = 20 - $inset
-    Fill-Rect $brG $x1 $y ($x2 - $x1) 1 $woodDark
-    Fill-Rect $brG ($x1 + 1) $y ($x2 - $x1 - 2) 1 $wood
-    Fill-Rect $brG ($x1 + 2) $y 2 1 $woodLight
-    Fill-Rect $brG ($x2 - 2) $y 1 1 $woodDeep
-    if (($row % 4) -eq 1) { Fill-Rect $brG ($x1 + 2) $y ($x2 - $x1 - 4) 1 $woodDeep }
-}
-Fill-Rect $brG 13 30 6 2 $woodDark
-Fill-Rect $brG 14 30 4 1 $woodDeep
-# small config label on the handle
-Fill-Rect $brG 13 20 6 4 (C 244 239 226)
-Fill-Rect $brG 14 21 4 1 (C 31 168 160)
-Fill-Rect $brG 14 23 3 1 (C 31 168 160)
-Save-Bitmap $brBmp $brG (Join-Path $itemTex 'device_brush.png')
+# ---- item icons (OWNED BY tools/generate_item_textures.ps1) ----------------
+# The document-modifier icon and the device-brush icon used to be painted here.
+# They now live in the item texture pipeline (tools/lib_item_art.ps1 +
+# tools/generate_item_textures.ps1), which draws all 4 brushes, the registry /
+# border-terminal / modifier icons, the per-device item screens and the item
+# material tiles with one palette and binary alpha. Painting them in two places
+# meant `generate.ps1 -Only devices` silently reverted the item art, so the
+# duplicate drawing was removed here (item branch only; no block-side logic
+# changed). The item MODEL json for both items is still written further down.
 
 # ---- document item models -------------------------------------------------
 Write-Json (Join-Path $itemModels 'id_card_cn.json') ([ordered]@{ parent = 'minecraft:item/generated'; textures = [ordered]@{ layer0 = 'veriborder:item/id_card_cn' } })

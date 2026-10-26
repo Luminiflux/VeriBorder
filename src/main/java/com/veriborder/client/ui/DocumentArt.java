@@ -16,6 +16,13 @@ import net.minecraft.client.gui.GuiGraphics;
  * second font resource.</p>
  */
 public final class DocumentArt {
+    /** A rectangle the caller may draw a portrait into. */
+    public record Slot(int x, int y, int width, int height) {
+        public boolean valid() {
+            return width > 4 && height > 4;
+        }
+    }
+
     private DocumentArt() {
     }
 
@@ -25,37 +32,152 @@ public final class DocumentArt {
      */
     public static void portrait(GuiGraphics graphics, Font font, int x, int y, int width, int height,
                                 int accent, boolean passport, String caption) {
-        graphics.fill(x, y, x + width, y + height, 0xFF223647);
-        graphics.fillGradient(x + 1, y + 1, x + width - 1, y + height - 1, 0xFF2B4659, 0xFF16242F);
-        graphics.renderOutline(x, y, width, height, (accent & 0x00FFFFFF) | 0x88000000);
+        portrait(graphics, font, x, y, width, height, accent, passport, caption, "");
+    }
+
+    /**
+     * 26.5 portrait/cover plate with the issuing template's emblem.
+     *
+     * <p>The plate is painted with the document's own colour ({@code accent}, which
+     * every caller resolves through {@code TemplateDisplay.coverTint}): a template
+     * document shows its template colour as a neutral cover washed with that tint,
+     * an official layout shows that layout's accent. The fixed slate-blue plate of
+     * 26.4 is gone — that is what kept a Japanese-passport template looking like
+     * the Japanese passport.</p>
+     *
+     * @param emblem preset emblem id of the template, "" for the neutral cover
+     *               emblem an official layout (or a pre-26.4.1 document) prints
+     */
+    public static void portrait(GuiGraphics graphics, Font font, int x, int y, int width, int height,
+                                int accent, boolean passport, String caption, String emblem) {
+        boolean customEmblem = emblem != null && !emblem.isBlank();
+        int plate = 0xFF000000 | (accent & 0x00FFFFFF);
+        int top = Ui.blend(plate, 0xFFFFFFFF, 0.30F);
+        int bottom = Ui.blend(plate, 0xFF06090D, 0.55F);
+        graphics.fill(x, y, x + width, y + height, bottom);
+        graphics.fillGradient(x + 1, y + 1, x + width - 1, y + height - 1, top, bottom);
+        graphics.renderOutline(x, y, width, height, Ui.blend(plate, 0xFFFFFFFF, 0.45F));
         if (passport) {
-            drawEmblem(graphics, x + width / 2, y + height / 2 - 6, 30, accent);
-            coverTitle(graphics, font, x + width / 2, y + height - 16, width - 8, caption, 0xCCE8F2FF);
-            // Guilloche-style rings behind the emblem.
-            for (int ring = 1; ring <= 3; ring++) {
-                int inset = ring * 7;
-                if (width - inset * 2 > 8 && height - inset * 2 > 8) {
-                    graphics.renderOutline(x + inset, y + inset, width - inset * 2, height - inset * 2,
-                            (accent & 0x00FFFFFF) | 0x22FFFFFF);
-                }
+            // Guilloche-style rings behind the emblem, then the emblem itself: the
+            // template glyph when the document carries one, the neutral cross for
+            // an official layout / pre-26.4.1 document.
+            drawCoverRings(graphics, x, y, width, height, accent);
+            if (customEmblem) {
+                IconPicker.drawGlyph(graphics, emblem, x + width / 2 - 15, y + height / 2 - 21, 30, accent);
+            } else {
+                drawEmblem(graphics, x + width / 2, y + height / 2 - 6, 30, accent);
             }
+            coverTitle(graphics, font, x + width / 2, y + height - 16, width - 8, caption, 0xCCE8F2FF);
             return;
         }
         int head = Math.max(10, height / 4);
         int headX = x + width / 2 - head / 3;
         int headY = y + Math.max(6, height / 5);
-        graphics.fill(headX, headY, headX + (head * 2) / 3, headY + head, 0xFF9DB2C4);
+        graphics.fill(headX, headY, headX + (head * 2) / 3, headY + head, Ui.blend(plate, 0xFFFFFFFF, 0.62F));
         graphics.renderOutline(headX, headY, Math.max(4, (head * 2) / 3), head, 0x66000000);
         int bodyTop = headY + head + 4;
         int bodyBottom = y + height - 8;
         if (bodyBottom > bodyTop + 6) {
             int half = Math.min(width / 3, head);
-            graphics.fill(x + width / 2 - half, bodyTop, x + width / 2 + half, bodyBottom, 0xFF7F97AB);
+            graphics.fill(x + width / 2 - half, bodyTop, x + width / 2 + half, bodyBottom,
+                    Ui.blend(plate, 0xFFFFFFFF, 0.40F));
             graphics.fill(x + width / 2 - half, bodyTop, x + width / 2 - half + 3, bodyBottom, 0x33FFFFFF);
         }
         if (caption != null && !caption.isBlank()) {
             coverTitle(graphics, font, x + width / 2, y + height - 13, width - 8, caption, 0xCCDCE9F5);
         }
+    }
+
+    /**
+     * 26.5 passport cover plate with a portrait window beside the emblem.
+     *
+     * <p>The viewer used to treat the passport slot as "cover only", which is why an
+     * issued passport showed no portrait at all. The cover now keeps its emblem AND
+     * the title, and reserves a photo window on the left when the holder's portrait
+     * is resolvable — the two no longer exclude each other.</p>
+     *
+     * @return the rectangle the caller should draw the portrait into, or
+     *         {@code null} when the cover is drawn without a photo window
+     */
+    public static Slot passportCover(GuiGraphics graphics, Font font, int x, int y, int width, int height,
+                                     int accent, String emblem, String caption, boolean withPhoto) {
+        int plate = 0xFF000000 | (accent & 0x00FFFFFF);
+        int top = Ui.blend(plate, 0xFFFFFFFF, 0.34F);
+        int bottom = Ui.blend(plate, 0xFF06090D, 0.60F);
+        graphics.fill(x, y, x + width, y + height, bottom);
+        graphics.fillGradient(x + 1, y + 1, x + width - 1, y + height - 1, top, bottom);
+        graphics.renderOutline(x, y, width, height, Ui.blend(plate, 0xFFFFFFFF, 0.48F));
+        // inner foil frame: a second, thinner line like a printed cover border
+        if (width > 30 && height > 30) {
+            graphics.renderOutline(x + 3, y + 3, width - 6, height - 6,
+                    (Ui.blend(plate, 0xFFFFFFFF, 0.28F) & 0x00FFFFFF) | 0x66000000);
+        }
+        drawCoverRings(graphics, x, y, width, height, accent);
+
+        Slot slot = null;
+        if (withPhoto) {
+            int photoH = height - 24;
+            int photoW = Math.min(54, Math.max(28, Math.round(photoH * 0.78F)));
+            slot = new Slot(x + 10, y + 10, photoW, photoH);
+        }
+        // Emblem: right of the photo window, otherwise centred on the plate.
+        String glyph = emblem == null ? "" : emblem;
+        int glyphSize = Math.min(34, Math.max(20, height / 3));
+        int glyphY = y + (height - 26) / 2 + 4 - glyphSize / 2;
+        if (slot != null && slot.valid()) {
+            int centreX = slot.x() + slot.width() + (x + width - 10 - (slot.x() + slot.width())) / 2;
+            drawCoverEmblem(graphics, glyph, centreX, glyphY, glyphSize, accent);
+        } else {
+            int centreX = x + width / 2;
+            drawCoverEmblem(graphics, glyph, centreX - glyphSize / 2, glyphY, glyphSize, accent);
+        }
+        coverTitle(graphics, font, x + width / 2, y + height - 15, width - 10, caption, 0xDDE9F3FF);
+        return slot != null && slot.valid() ? slot : null;
+    }
+
+    /** The cover glyph: the template crest, or the neutral cross for a plain layout. */
+    private static void drawCoverEmblem(GuiGraphics graphics, String emblem, int x, int y, int size,
+                                        int accent) {
+        if (emblem != null && !emblem.isBlank()) {
+            IconPicker.drawGlyph(graphics, emblem, x, y, size, accent);
+            return;
+        }
+        drawEmblem(graphics, x + size / 2, y + size / 2, size, 0xFFE9F1F8);
+    }
+
+    /**
+     * Frame colour the portrait is cropped into: the dark end of a cover plate of
+     * {@code accent}. {@code PortraitArt} paints its rounded corners with it, so the
+     * photo sits in the plate instead of on top of it.
+     */
+    public static int coverTone(int accent) {
+        return Ui.blend(0xFF000000 | (accent & 0x00FFFFFF), 0xFF06090D, 0.55F);
+    }
+
+    /**
+     * Generic photo placeholder for a window whose portrait cannot be resolved on
+     * this client. Never a real portrait: a silhouette in the plate tone, framed
+     * like the printed photo it stands in for.
+     */
+    public static void photoPlaceholder(GuiGraphics graphics, int x, int y, int width, int height,
+                                        int frameColor) {
+        if (width < 6 || height < 6) {
+            return;
+        }
+        graphics.fill(x, y, x + width, y + height, frameColor);
+        int head = Math.max(6, height / 4);
+        int headW = Math.max(4, (head * 2) / 3);
+        int headX = x + (width - headW) / 2;
+        int headY = y + Math.max(3, height / 6);
+        graphics.fill(headX, headY, headX + headW, headY + head, 0xFF9DB2C4);
+        graphics.renderOutline(headX, headY, headW, head, 0x66000000);
+        int bodyTop = headY + head + 3;
+        if (bodyTop < y + height - 3) {
+            int half = Math.min(width / 3, head);
+            graphics.fill(x + width / 2 - half, bodyTop, x + width / 2 + half, y + height - 3,
+                    0xFF7F97AB);
+        }
+        graphics.renderOutline(x, y, width, height, 0x66000000);
     }
 
     /**
@@ -81,6 +203,21 @@ public final class DocumentArt {
         graphics.pose().scale(line.scale(), line.scale(), 1.0F);
         graphics.drawCenteredString(font, line.text(), 0, 0, color);
         graphics.pose().popPose();
+    }
+
+    /**
+     * Faint concentric rings behind a passport cover emblem. Split out of
+     * {@link #portrait} in 26.4.1 so the custom-emblem path draws the same
+     * backdrop without duplicating the geometry.
+     */
+    private static void drawCoverRings(GuiGraphics graphics, int x, int y, int width, int height, int accent) {
+        for (int ring = 1; ring <= 3; ring++) {
+            int inset = ring * 7;
+            if (width - inset * 2 > 8 && height - inset * 2 > 8) {
+                graphics.renderOutline(x + inset, y + inset, width - inset * 2, height - inset * 2,
+                        (accent & 0x00FFFFFF) | 0x22FFFFFF);
+            }
+        }
     }
 
     /** Simple cross emblem (kept local so the shared Ui art is unchanged). */

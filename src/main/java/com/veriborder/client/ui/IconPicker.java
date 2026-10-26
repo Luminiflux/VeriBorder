@@ -17,10 +17,21 @@ import java.util.List;
  * primitives the rest of the UI uses, so no extra texture is loaded.</p>
  */
 public final class IconPicker {
-    /** Stable icon ids, in grid order. */
+    /**
+     * Stable icon ids, in grid order.
+     *
+     * <p>26.4.1: this list is the single crest set of the mod — the item-model
+     * predicate {@code veriborder:emblem} selects
+     * {@code index / 16} out of exactly this order
+     * ({@code com.veriborder.client.render.EmblemSet.IDS}), and
+     * {@code textures/item/emblem_<id>.png} carries one layer-2 art per id. The
+     * last three (gear / eagle / machine readable) complete the documented crest
+     * brief; the earlier nine were already here.</p>
+     */
     public static final List<String> ICONS = List.of(
             "emblem", "star", "crown", "shield", "globe", "leaf",
-            "anchor", "key", "stamp", "book", "diamond", "flame"
+            "anchor", "key", "stamp", "book", "diamond", "flame",
+            "gear", "eagle", "mrz"
     );
     public static final String DEFAULT = "emblem";
 
@@ -187,6 +198,32 @@ public final class IconPicker {
                 graphics.fill(mid - unit, y + unit, mid + unit, y + size - unit, color);
                 graphics.fill(mid - 2 * unit, midY, mid - unit, y + size - unit, color);
                 graphics.fill(mid + unit, midY, mid + 2 * unit, y + size - unit, color);
+            }
+            case "gear" -> {
+                graphics.fill(x + 2 * unit, y + 2 * unit, x + size - 2 * unit, y + size - 2 * unit, color);
+                graphics.fill(x + unit, midY - 2 * unit, x + size - unit, midY + 2 * unit,
+                        (color & 0x00FFFFFF) | 0xAA000000);
+                graphics.fill(x + 3 * unit, y + unit, x + size - 3 * unit, y + 2 * unit, color);
+                graphics.fill(x + 3 * unit, y + size - 2 * unit, x + size - 3 * unit, y + size - unit, color);
+                graphics.fill(mid - unit, midY - unit, mid + unit, midY + unit,
+                        (color & 0x00FFFFFF) | 0x66000000);
+            }
+            case "eagle" -> {
+                graphics.fill(x + unit, y + 2 * unit, x + size - unit, y + 4 * unit, color);
+                graphics.fill(mid - unit, y + unit, mid + unit, y + size - 2 * unit, color);
+                graphics.fill(x, y + 4 * unit, x + 2 * unit, y + 5 * unit, color);
+                graphics.fill(x + size - 2 * unit, y + 4 * unit, x + size, y + 5 * unit, color);
+                graphics.fill(mid - 2 * unit, y + size - 3 * unit, mid + 2 * unit, y + size - unit,
+                        (color & 0x00FFFFFF) | 0xAA000000);
+            }
+            case "mrz" -> {
+                for (int column = 0; column < 4; column++) {
+                    int barX = x + unit + column * 2 * unit;
+                    graphics.fill(barX, y + unit, barX + unit, y + size - 2 * unit, color);
+                }
+                graphics.fill(x + unit, midY - unit / 2, x + size - unit, midY + unit / 2,
+                        (color & 0x00FFFFFF) | 0x88000000);
+                graphics.fill(x + unit, y + size - 2 * unit, x + size - unit, y + size - unit, color);
             }
             default -> {
                 graphics.fill(mid - unit, y, mid + unit, y + size, color);

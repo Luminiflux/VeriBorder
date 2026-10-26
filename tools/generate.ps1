@@ -12,9 +12,10 @@
 #   devices  generate_assets.ps1 -NoDocuments
 #            device/entity textures, block models, blockstates, item models,
 #            loot tables, block tags, brush icons, modifier icon, mod logo
-#   items    generate_item_textures.ps1
-#            the document card textures (passports, IDs, permit, custom covers)
-#            plus the ink audit that fails the build on text past the card face
+#   items    generate_document_layers.ps1 + generate_item_textures.ps1
+#            the layered document covers (dyed plate / print / crest / custom-map
+#            frame), their item models, the eleven flat legacy cards, then the ink
+#            audit that fails the build on text past the card face
 #   recipes  generate_recipes.ps1
 #            data/veriborder/recipes/*.json
 #
@@ -78,10 +79,14 @@ foreach ($step in $steps) {
             }
         }
         'items' {
-            Invoke-Step 'items' 'document card textures + ink audit' {
+            Invoke-Step 'items' 'document flat cards + crests + item models + ink audit' {
                 if ($AuditOnly) {
                     & (Join-Path $PSScriptRoot 'generate_item_textures.ps1') -Root $root -AuditOnly
                 } else {
+                    # 26.5: the flat document cards (<art>_flat), the 15 crests, the
+                    # base-map frames, the eleven pre-26.4.1 per-layout cards and the
+                    # item models that reference them are owned by the document line.
+                    & (Join-Path $PSScriptRoot 'generate_document_cards.ps1') -Root $root
                     & (Join-Path $PSScriptRoot 'generate_item_textures.ps1') -Root $root
                 }
             }

@@ -1210,13 +1210,13 @@
     },
     {
       "from": [
-        -1.2,
-        2.7,
+        -1.4,
+        2.8,
         0.6
       ],
       "to": [
-        1.2,
-        4.1,
+        1.4,
+        4,
         0.7
       ],
       "faces": {
@@ -1227,7 +1227,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "south": {
           "uv": [
@@ -1236,7 +1236,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "east": {
           "uv": [
@@ -1245,7 +1245,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "west": {
           "uv": [
@@ -1254,7 +1254,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "up": {
           "uv": [
@@ -1263,7 +1263,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "down": {
           "uv": [
@@ -1272,19 +1272,19 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         }
       }
     },
     {
       "from": [
-        14.8,
-        2.7,
+        14.6,
+        2.8,
         0.6
       ],
       "to": [
-        17.2,
-        4.1,
+        17.4,
+        4,
         0.7
       ],
       "faces": {
@@ -1295,7 +1295,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "south": {
           "uv": [
@@ -1304,7 +1304,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "east": {
           "uv": [
@@ -1313,7 +1313,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "west": {
           "uv": [
@@ -1322,7 +1322,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "up": {
           "uv": [
@@ -1331,7 +1331,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         },
         "down": {
           "uv": [
@@ -1340,7 +1340,7 @@
             16,
             16
           ],
-          "texture": "#arrow"
+          "texture": "#led"
         }
       }
     },

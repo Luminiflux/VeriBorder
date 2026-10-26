@@ -1,0 +1,7 @@
+{
+    "parent":  "minecraft:item/generated",
+    "textures":  {
+                     "layer0":  "veriborder:item/passport_flat",
+                     "layer1":  "veriborder:item/emblem_emblem"
+                 }
+}

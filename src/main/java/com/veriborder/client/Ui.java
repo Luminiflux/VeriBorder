@@ -1,5 +1,7 @@
 package com.veriborder.client;
 
+import com.veriborder.client.ui.IconPicker;
+import com.veriborder.client.ui.PortraitArt;
 import com.veriborder.doc.DocumentData;
 import com.veriborder.doc.DocumentKind;
 import com.veriborder.doc.DocumentStatus;
@@ -68,6 +70,20 @@ public final class Ui {
 
     public static Font font() {
         return Minecraft.getInstance().font;
+    }
+
+    /**
+     * Whether the client reads the Chinese column of a bilingual label (26.4.1).
+     * The template definition carries a Chinese and an English title; every
+     * surface picks the one that matches the running language.
+     */
+    public static boolean chinese() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.getLanguageManager() == null) {
+            return false;
+        }
+        String selected = minecraft.getLanguageManager().getSelected();
+        return selected != null && selected.toLowerCase(java.util.Locale.ROOT).startsWith("zh");
     }
 
     public static void panel(GuiGraphics graphics, int x, int y, int width, int height) {
@@ -203,7 +219,10 @@ public final class Ui {
         if (width < 24 || height < 24) {
             return;
         }
-        int accent = doc == null ? GOLD : doc.accentColor() | 0xFF000000;
+        // 26.4.1: the card uses the colour copied from the issuing template (or the
+        // document's own accent when it carries none) and the template emblem.
+        int accent = doc == null ? GOLD : TemplateDisplay.documentTint(doc) | 0xFF000000;
+        String emblem = doc == null ? "" : TemplateDisplay.documentEmblem(doc);
         int dark = doc == null ? 0xFF10151C : blend(accent, 0xFF111820, 0.72F);
         graphics.fillGradient(x, y, x + width, y + height, dark, 0xFF090E14);
         graphics.renderOutline(x, y, width, height, doc == null ? BORDER : accent);
@@ -216,9 +235,15 @@ public final class Ui {
             }
             int contentWidth = width - 14;
             boolean passport = doc.kind() == DocumentKind.PASSPORT;
-            String title = doc.displayName();
-            int titleWidth = contentWidth - (doc.customStyle() ? 38 : 0);
+            // 26.4.1: name priority is template title -> display name -> official name.
+            String title = TemplateDisplay.documentTitle(doc);
+            int titleWidth = contentWidth - (doc.customStyle() ? 38 : 0) - (emblem.isBlank() ? 0 : 14);
             graphics.drawString(font(), ellipsis(title, Math.max(20, titleWidth)), x + 7, y + 7, 0xFFF7EEDB, false);
+            if (!emblem.isBlank() && width > 90) {
+                // Small template emblem on the title row: identifies the credential
+                // series at a glance without adding another line.
+                IconPicker.drawGlyph(graphics, emblem, x + width - 15, y + 5, 10, accent);
+            }
             graphics.drawString(font(), ellipsis(doc.number(), contentWidth), x + 7, y + 17, 0xFFD8C9A8, false);
             if (doc.customStyle()) {
                 String custom = Component.translatable("document.veriborder.custom").getString();
@@ -231,7 +256,23 @@ public final class Ui {
             if (passport) {
                 int infoX = x + 8;
                 int infoY = y + 35;
-                int textWidth = Math.max(40, width - 40);
+                // 26.5 portrait: a passport card shows the holder's photo too. The
+                // viewer draws the same face on the cover plate, so the officer, the
+                // issuing clerk and the holder all look at one image. The box is
+                // reserved first and the text column then shrinks around it, so a
+                // card without a resolvable portrait keeps exactly this geometry.
+                int photoW = Math.min(30, Math.max(18, width / 5));
+                int photoH = Math.min(42, Math.max(22, height - 62));
+                int photoX = x + width - 8 - photoW;
+                int photoY = infoY - 5;
+                if (!PortraitArt.draw(graphics, photoX, photoY, photoW, photoH, doc, 0xFF263B4D)) {
+                    graphics.fill(photoX, photoY, photoX + photoW, photoY + photoH, 0xFF263B4D);
+                    graphics.renderOutline(photoX, photoY, photoW, photoH, 0x66FFFFFF);
+                    graphics.fill(photoX + 5, photoY + 7, photoX + photoW - 5, photoY + 15, 0xFF8FA5B7);
+                    graphics.fill(photoX + 3, photoY + 19, photoX + photoW - 3, photoY + photoH - 4,
+                            0xFF6F899E);
+                }
+                int textWidth = Math.max(40, photoX - infoX - 4);
                 graphics.drawString(font(), ellipsis(doc.name(), textWidth), infoX, infoY, TEXT, false);
                 graphics.drawString(font(), ellipsis(Component.translatable(doc.sexKey()).getString()
                         + "  " + doc.birthDate(), textWidth), infoX, infoY + 11, MUTED, false);
@@ -240,7 +281,6 @@ public final class Ui {
                         + " " + (doc.isPermanent() ? Component.translatable("date.veriborder.permanent").getString()
                         : doc.expiryDate()), textWidth), infoX, infoY + 33,
                         doc.isExpired() ? RED : MUTED, false);
-                drawEmblem(graphics, x + width - 28, y + 30, 18, accent);
                 String mrz = doc.mrz2();
                 // The MRZ plate gets its own band only on tall cards. On the
                 // compact cards (readers, modifier, issuer preview) it would
@@ -257,10 +297,18 @@ public final class Ui {
                 int photoWidth = Math.min(30, Math.max(18, width / 4));
                 int photoHeight = Math.min(42, Math.max(22, height - 62));
                 int photoY = y + 30;
-                graphics.fill(x + 8, photoY, x + 8 + photoWidth, photoY + photoHeight, 0xFF263B4D);
-                graphics.renderOutline(x + 8, photoY, photoWidth, photoHeight, 0x66FFFFFF);
-                graphics.fill(x + 13, photoY + 7, x + 8 + photoWidth - 5, photoY + 15, 0xFF8FA5B7);
-                graphics.fill(x + 11, photoY + 19, x + 8 + photoWidth - 3, photoY + photoHeight - 5, 0xFF6F899E);
+                // 26.4.1 portrait: the ID-card photo slot draws the real portrait
+                // (skin / preset / uploaded PNG) whenever this client can resolve
+                // one. The colour-block silhouette below is only the fallback, so a
+                // card keeps its geometry and never leaves an empty hole. One hook
+                // here covers the border terminal's document card and the print
+                // preview, which both render through this method.
+                if (!PortraitArt.draw(graphics, x + 8, photoY, photoWidth, photoHeight, doc, 0xFF263B4D)) {
+                    graphics.fill(x + 8, photoY, x + 8 + photoWidth, photoY + photoHeight, 0xFF263B4D);
+                    graphics.renderOutline(x + 8, photoY, photoWidth, photoHeight, 0x66FFFFFF);
+                    graphics.fill(x + 13, photoY + 7, x + 8 + photoWidth - 5, photoY + 15, 0xFF8FA5B7);
+                    graphics.fill(x + 11, photoY + 19, x + 8 + photoWidth - 3, photoY + photoHeight - 5, 0xFF6F899E);
+                }
                 int infoX = x + 12 + photoWidth;
                 int textWidth = width - (infoX - x) - 7;
                 graphics.drawString(font(), ellipsis(doc.name(), textWidth), infoX, y + 32, TEXT, false);
@@ -290,6 +338,54 @@ public final class Ui {
             }
         } finally {
             graphics.disableScissor();
+        }
+    }
+
+    /**
+     * 26.5 crest slot of a document card: the template's preset glyph when the
+     * document carries one, the neutral cross otherwise, so old and new documents
+     * keep the same card geometry.
+     */
+    public static void drawCardEmblem(GuiGraphics graphics, int x, int y, int size, int accent,
+                                      String emblem) {
+        if (emblem != null && !emblem.isBlank()) {
+            IconPicker.drawGlyph(graphics, emblem, x, y, size, accent);
+            return;
+        }
+        drawEmblem(graphics, x, y, size, accent);
+    }
+
+    /**
+     * 26.4.1 credential colour band: the one-line live preview shared by the
+     * registry template editor and the issuing machine. It shows the template's
+     * tint as a band, its emblem on the left and its title on the right, which is
+     * exactly what the issued cover will look like.
+     */
+    public static void credentialBand(GuiGraphics graphics, int x, int y, int width, int height,
+                                      int tint, String emblem, String title, String footer) {
+        if (width < 16 || height < 10) {
+            return;
+        }
+        int color = (tint & 0x00FFFFFF) | 0xFF000000;
+        int shade = blend(color, 0xFF0A1119, 0.66F);
+        graphics.fillGradient(x, y, x + width, y + height, color, shade);
+        graphics.renderOutline(x, y, width, height, (color & 0x00FFFFFF) | 0xCC000000);
+        graphics.fill(x + 1, y + 1, x + width - 1, y + 2, 0x55FFFFFF);
+        int glyph = Math.min(height - 4, 14);
+        if (emblem != null && !emblem.isBlank()) {
+            int glyphY = y + (height - glyph) / 2;
+            graphics.fill(x + 3, glyphY - 1, x + 6 + glyph, glyphY + glyph + 1, 0x44000000);
+            IconPicker.drawGlyph(graphics, emblem, x + 4, glyphY, glyph, 0xFFFFFFFF);
+        } else {
+            graphics.fill(x + 4, y + 4, x + 4 + glyph, y + 4 + glyph, 0x33000000);
+        }
+        int textX = x + 9 + glyph;
+        int textWidth = Math.max(12, width - (textX - x) - 6);
+        String label = title == null ? "" : title;
+        graphics.drawString(font(), ellipsis(label, textWidth), textX, y + 3, 0xFFFFFFFF, true);
+        if (footer != null && !footer.isBlank() && height >= 22) {
+            graphics.drawString(font(), ellipsis(footer, textWidth), textX, y + 13,
+                    (blend(0xFFFFFFFF, color, 0.45F) & 0x00FFFFFF) | 0xCC000000, false);
         }
     }
 

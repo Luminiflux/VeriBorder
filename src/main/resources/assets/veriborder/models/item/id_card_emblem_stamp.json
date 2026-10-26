@@ -1,0 +1,6 @@
+{
+    "parent":  "veriborder:item/doc_layers_id_card",
+    "textures":  {
+                     "layer1":  "veriborder:item/emblem_stamp"
+                 }
+}

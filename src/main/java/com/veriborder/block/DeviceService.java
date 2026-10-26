@@ -16,6 +16,7 @@ import com.veriborder.doc.DocStyle;
 import com.veriborder.doc.EndorsementRecord;
 import com.veriborder.doc.EndorsementType;
 import com.veriborder.doc.MrzUtil;
+import com.veriborder.doc.PortraitLibrary;
 import com.veriborder.doc.StampRecord;
 import com.veriborder.doc.TravellerReasons;
 import com.veriborder.doc.VerificationResult;
@@ -621,6 +622,9 @@ public final class DeviceService {
             message(player, "message.veriborder.gate.busy");
             return;
         }
+        // The exit gate started the same verification state machine as the entry
+        // gate but never told the traveller, so the "verifying" line was missing.
+        message(player, "message.veriborder.gate.verifying");
         if (stage.recordIndex() >= 0) {
             consumeBoundRecord(player, held, entry.kind(), stage.recordIndex());
         }
@@ -1472,17 +1476,44 @@ public final class DeviceService {
         // the form, so a client that ignores the lock still cannot issue a
         // different document name, authority, place or date.
         CompoundTag form = data.copy();
+        // 26.4.1: the applicant form never carries template styling. The plain
+        // tint/emblem/base-map keys are dropped here and the trusted keys are
+        // cleared, because the template is resolved from the registry below and
+        // re-injected by the server — a forged value can neither colour a
+        // document nor smuggle a template id onto it.
+        form.remove(DocumentData.TEMPLATE_TINT);
+        form.remove(DocumentData.TEMPLATE_EMBLEM);
+        form.remove(DocumentData.TEMPLATE_TEXTURE);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_ID);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_TINT);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_EMBLEM);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_TEX);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_TITLE);
         // 26.4 fix: the document-name lock is resolved entirely from the device.
         // The trusted "lockedDisplayName" key carries the administrator's title
         // and the applicant form can neither supply nor unlock it.
         form = applyLockedDocumentName(device.locks(), form);
-        if (lockedLayout) {
-            // 26.4: a layout lock backed by a registry template also carries the
-            // template's colour/icon. A template deleted since configuration
-            // contributes nothing — the layout lock keeps working on its own.
-            applyLockedStyleTemplate(form, RegistryService.templateById(
-                    player.getServer(), device.lockedStyleTemplate()), style);
+        // 26.4.1 registry template: the machine's layout lock decides first, then
+        // the template the operator picked in the layout dropdown ("表单/设备").
+        // Either way the id is looked up in the registry again and must belong to
+        // this credential kind *and* to the layout being issued, so a forged id
+        // (or a deleted/re-pointed template) falls back to the plain layout
+        // instead of decorating the document.
+        CredentialRegistryData.Template issueTemplate = resolveIssueTemplate(
+                lockedLayout ? RegistryService.templateById(player.getServer(), device.lockedStyleTemplate())
+                        : null,
+                RegistryService.templateById(player.getServer(), form.getString("templateId")),
+                expected, style);
+        if (issueTemplate != null) {
+            // 26.4.2: the trusted template keys make the issued document carry its
+            // own snapshot (templateId / tint / emblem / templateTex) *and* the
+            // custom-layout style identity "template:<id>", so the cover is drawn
+            // as the template's, not as the base layout's.
+            applyRegistryTemplate(form, issueTemplate, style);
         }
+        // The submitted id is a selection hint only; it never reaches the document
+        // as-is (only the trusted, resolved copy does).
+        form.remove("templateId");
         if (device.lockAuthority() && !device.lockedAuthority().isBlank()) {
             form.putString("authority", device.lockedAuthority());
         }
@@ -1515,10 +1546,8 @@ public final class DeviceService {
         // code are fallbacks only. The old port/officer/airport country text fields
         // and the legacy MRZ-country policy no longer take part in issuing (their
         // NBT is kept on the block entity but ignored here).
-        String issuerCountry = device.issuerCountry();
-        if (issuerCountry.isBlank()) {
-            issuerCountry = MrzUtil.countryCode(form.getString("issuerCountry"));
-        }
+        String issuerCountry = issueCountryCode(device.issuerCountry(), issueTemplate,
+                form.getString("issuerCountry"));
         if (issuerCountry.isBlank()) {
             issuerCountry = RegistryService.resolveIssuerCountryCode(player.getServer(), "", form);
         }
@@ -1540,6 +1569,23 @@ public final class DeviceService {
             form.putString("nationality", machineNationality);
         }
         form.putString("style", style.id());
+        // 26.4.1 portrait: the reference must resolve in this world's portrait
+        // library. A forged or stale {@code custom:<hash>} (the upload was
+        // released, the payload was invented) falls back to the traveller skin
+        // instead of decorating the document with an image nobody can draw. The
+        // owner is validated as a UUID and defaults to the issuing player, so a
+        // document always knows whose skin "skin" means.
+        String portraitId = PortraitLibrary.normalizeId(form.getString(DocumentData.PORTRAIT));
+        if (PortraitLibrary.isCustom(portraitId)) {
+            PortraitLibrary portraits = RegistryService.portraits(player.getServer());
+            if (portraits == null || !portraits.has(portraitId)) {
+                portraitId = PortraitLibrary.DEFAULT_ID;
+            }
+        }
+        form.putString(DocumentData.PORTRAIT, portraitId);
+        String portraitOwner = PortraitLibrary.normalizeOwner(form.getString(DocumentData.PORTRAIT_OWNER));
+        form.putString(DocumentData.PORTRAIT_OWNER,
+                portraitOwner.isEmpty() ? PortraitLibrary.normalizeOwner(player.getStringUUID()) : portraitOwner);
         DocumentData doc = DocumentFactory.fromForm(style, form);
         // Remember the issuer's title policy on the signed document so the border
         // terminal can grey out the custom display name instead of silently
@@ -1974,6 +2020,13 @@ public final class DeviceService {
         form.remove(DocumentFactory.LOCKED_DISPLAY_NAME);
         form.remove(DocumentFactory.LOCKED_STYLE_COLOR);
         form.remove(DocumentFactory.LOCKED_STYLE_ICON);
+        // 26.4.1: the template definition is injected by the server after this
+        // scrub, so a client-supplied copy never survives either.
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_ID);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_TINT);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_EMBLEM);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_TEX);
+        form.remove(DocumentFactory.LOCKED_TEMPLATE_TITLE);
         form.putBoolean("lockDocumentName", settings.lockDocumentName());
         if (settings.lockDocumentName()) {
             // The trusted key replaces the client's title; a forged custom cover
@@ -1986,6 +2039,29 @@ public final class DeviceService {
     }
 
     /**
+     * 26.4.1 issuing-country chain, in priority order: the machine's own country
+     * selector, then the resolved registry template's default code, then the code
+     * the applicant form claims. The registry lookup (a name/nationality match)
+     * only runs when all three are blank, and the layout code is the last resort.
+     * Pure, so the "template country reaches the document" rule is unit-testable.
+     */
+    public static String issueCountryCode(@Nullable String deviceCountry,
+                                          @Nullable CredentialRegistryData.Template template,
+                                          @Nullable String formCountry) {
+        String code = MrzUtil.countryCode(deviceCountry);
+        if (!code.isEmpty()) {
+            return code;
+        }
+        if (template != null) {
+            code = MrzUtil.countryCode(template.mrzCountry());
+            if (!code.isEmpty()) {
+                return code;
+            }
+        }
+        return MrzUtil.countryCode(formCountry);
+    }
+
+    /**
      * 26.4 registry-template layout lock: copies the locked template's colour and
      * icon onto the (already trusted) issuer form so the issued document carries
      * the operator's template, not just its base layout. The template is resolved
@@ -1995,20 +2071,93 @@ public final class DeviceService {
     public static CompoundTag applyLockedStyleTemplate(CompoundTag values,
                                                        @Nullable CredentialRegistryData.Template template,
                                                        DocStyle style) {
+        return applyRegistryTemplate(values, template, style);
+    }
+
+    /**
+     * 26.4.1: picks the registry template an issue request stands on.
+     *
+     * <p>The device's layout lock wins over the template the applicant/operator
+     * picked in the form, and a template that does not belong to the credential
+     * kind being issued or to the layout being issued is ignored (never
+     * "repaired" onto a different layout). Returns {@code null} when the document
+     * is issued from a plain official layout.</p>
+     */
+    @Nullable
+    public static CredentialRegistryData.Template resolveIssueTemplate(
+            @Nullable CredentialRegistryData.Template locked,
+            @Nullable CredentialRegistryData.Template submitted,
+            @Nullable DocumentKind kind, @Nullable DocStyle style) {
+        if (matchesIssueTemplate(locked, kind, style)) {
+            return locked;
+        }
+        if (matchesIssueTemplate(submitted, kind, style)) {
+            return submitted;
+        }
+        return null;
+    }
+
+    /** Whether {@code template} may decorate a document of this kind and layout. */
+    public static boolean matchesIssueTemplate(@Nullable CredentialRegistryData.Template template,
+                                               @Nullable DocumentKind kind, @Nullable DocStyle style) {
+        if (template == null || style == null || kind == null || !template.valid()) {
+            return false;
+        }
+        return template.kind() == kind && style.kind() == kind && template.style().equals(style.id());
+    }
+
+    /**
+     * 26.4.1: writes a resolved registry template onto the trusted issuer form —
+     * the 26.4 colour/icon pair plus the template definition the document keeps
+     * for itself (id, tint, emblem, base map, own title). A template that does not
+     * match the issued layout, or a blank id, contributes nothing at all, so the
+     * document always falls back to its official layout. Pure (no world access).
+     *
+     * <p>26.4.2 issue contract: the {@code lockedTemplate*} keys written here are
+     * what makes the issued document carry {@code templateId},
+     * {@code tint} (= {@link CredentialRegistryData.Template#effectiveTint()},
+     * never 0 for a saved template), {@code emblem}, {@code templateTex} <b>and the
+     * style identity</b> {@code style = "template:<id>"}, which
+     * {@link DocumentFactory#fromForm} writes through
+     * {@link DocumentData#applyRegistryTemplate}. Without the template style the
+     * viewer kept drawing the base layout's cover — the "custom template stays a
+     * red Japanese passport" bug.</p>
+     */
+    public static CompoundTag applyRegistryTemplate(CompoundTag values,
+                                                    @Nullable CredentialRegistryData.Template template,
+                                                    DocStyle style) {
         CompoundTag form = values == null ? new CompoundTag() : values;
-        if (template == null || style == null) {
+        if (!matchesIssueTemplate(template, style == null ? null : style.kind(), style)
+                || template.id().isBlank()) {
             return form;
         }
-        if (!template.style().equals(style.id()) || template.kind() != style.kind()) {
-            // The template was re-pointed at another layout: the lock still uses
-            // the stored layout, so its colour/icon must not contradict it.
-            return form;
-        }
-        form.putInt(DocumentFactory.LOCKED_STYLE_COLOR, template.color() & 0x00FFFFFF);
+        // The 26.4 colour/icon lock. A template with no colour of its own (an old
+        // row) resolves through its tint, so a document never ends up with a
+        // "black" accent: 0 is not a colour, it is the absence of one.
+        int accent = template.color() & 0x00FFFFFF;
+        form.putInt(DocumentFactory.LOCKED_STYLE_COLOR, accent == 0 ? template.effectiveTint() : accent);
         String icon = template.icon() == null ? "" : template.icon().trim();
         if (!icon.isBlank()) {
             form.putString(DocumentFactory.LOCKED_STYLE_ICON, icon);
         }
+        form.putString(DocumentFactory.LOCKED_TEMPLATE_ID, template.id());
+        // Always written, even if the value had to fall back: a template the
+        // registry stores carries a colour (CredentialRegistryData defaults it), and
+        // the document's tint must be that resolved colour rather than "absent",
+        // which the item colour handler reads as an untinted cover.
+        form.putInt(DocumentFactory.LOCKED_TEMPLATE_TINT, template.effectiveTint() & 0x00FFFFFF);
+        if (!template.emblem().isBlank()) {
+            form.putString(DocumentFactory.LOCKED_TEMPLATE_EMBLEM, template.emblem());
+        }
+        if (template.hasTexture()) {
+            form.putString(DocumentFactory.LOCKED_TEMPLATE_TEX, template.texture());
+        }
+        // The template names the document it defines: its own title in Chinese
+        // first (the catalogue's primary language), falling back to the other
+        // language and finally to the template name. The factory only uses this
+        // when neither the device's name lock nor the applicant named the
+        // document, so a locked or typed title always wins.
+        form.putString(DocumentFactory.LOCKED_TEMPLATE_TITLE, template.title(true));
         return form;
     }
 

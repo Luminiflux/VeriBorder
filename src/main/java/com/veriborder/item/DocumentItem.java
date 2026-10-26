@@ -35,6 +35,32 @@ public class DocumentItem extends Item {
         return kind;
     }
 
+    /**
+     * 26.4.1: credential kind of the item behind {@code stack}, never {@code null}.
+     * The client render code only ever holds an {@link ItemStack}.
+     */
+    public static DocumentKind kindOf(ItemStack stack) {
+        if (stack != null && stack.getItem() instanceof DocumentItem document) {
+            return document.kind();
+        }
+        return DocumentKind.ID_CARD;
+    }
+
+    /**
+     * 26.4.1: installs the custom base-map renderer on the client.
+     *
+     * <p>The eight dynamic cover slots cannot be sampled by a baked item model (the
+     * block atlas is stitched at resource-load time, a base map arrives later), so
+     * those model variants are {@code builtin/entity} and are drawn by
+     * {@code com.veriborder.client.render.DocumentItemRenderer}. Routed through
+     * {@code DistExecutor} so a dedicated server never links a renderer class.</p>
+     */
+    @Override
+    public void initializeClient(java.util.function.Consumer<net.minecraftforge.client.extensions.common.IClientItemExtensions> consumer) {
+        DistExecutor.unsafeRunWhenOn(Dist.CLIENT,
+                () -> () -> com.veriborder.client.render.DocumentItemClient.install(consumer));
+    }
+
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
@@ -48,7 +74,14 @@ public class DocumentItem extends Item {
     public Component getName(ItemStack stack) {
         DocumentData data = getDocument(stack);
         if (data != null) {
-            return data.displayNameComponent();
+            // 26.4.1: the item name follows the same priority as the viewer and the
+            // border card — issuing template title, display name, official name.
+            // The template titles live in the client registry cache, so the client
+            // path runs through DistExecutor and a dedicated server keeps the
+            // plain document name.
+            return DistExecutor.unsafeRunForDist(
+                    () -> () -> ClientHooks.documentTitle(data),
+                    () -> data::displayNameComponent);
         }
         return Component.translatable("item.veriborder." + kind.itemId());
     }
@@ -65,6 +98,9 @@ public class DocumentItem extends Item {
             tooltip.add(Component.translatable("tooltip.veriborder.document.type", data.documentType())
                     .withStyle(ChatFormatting.AQUA));
         }
+        // 26.4.1: the issuing template and its emblem are client-side knowledge
+        // (registry snapshot), so these lines are appended by the client hook.
+        DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> ClientHooks.appendTemplateTooltip(data, tooltip));
         tooltip.add(Component.translatable("tooltip.veriborder.document.number", data.number()).withStyle(ChatFormatting.GRAY));
         tooltip.add(Component.translatable("tooltip.veriborder.document.holder", data.name()).withStyle(ChatFormatting.GRAY));
         tooltip.add(Component.translatable("tooltip.veriborder.document.status",
@@ -110,12 +146,33 @@ public class DocumentItem extends Item {
         stack.getOrCreateTag().putInt("CustomModelData", data.itemModelData());
     }
 
+    /**
+     * 26.4.2: ARGB colour of the item's {@code ItemColors} tint index 0.
+     *
+     * <p>The rule lives in {@link DocumentData#coverTint()} (so the item colour
+     * handler, the item renderer and the viewer cannot disagree) and its zero value
+     * has one meaning only: <b>no cover colour recorded → {@code -1}</b>, i.e. no
+     * tint at all.</p>
+     *
+     * <p>This is the fix for "a template-issued document still looks like the base
+     * layout": an opaque {@code 0xFF000000} painted the plate black, and silently
+     * re-using the base layout's accent painted it the layout's own colour (a
+     * Japanese passport red), so the template's colour never showed.</p>
+     */
     public static int tintColor(ItemStack stack) {
-        DocumentData data = getDocument(stack);
-        if (data != null && data.customStyle()) {
-            return 0xFF000000 | data.accentColor();
+        if (stack == null || stack.isEmpty()) {
+            return -1;
         }
-        return -1;
+        return tintColorOf(getDocument(stack));
+    }
+
+    /**
+     * {@link #tintColor(ItemStack)} for an already parsed document; {@code null}
+     * (no document NBT at all: creative tab icon, freshly crafted blank booklet)
+     * is untinted.
+     */
+    public static int tintColorOf(@Nullable DocumentData data) {
+        return data == null ? -1 : data.coverTint();
     }
 
     public ItemStack sampleStack(DocStyle style) {

@@ -1,0 +1,38 @@
+{
+    "parent":  "minecraft:item/generated",
+    "textures":  {
+                     "layer0":  "veriborder:item/passport_cn"
+                 },
+    "overrides":  [
+                      {
+                          "predicate":  {
+                                            "custom_model_data":  2
+                                        },
+                          "model":  "veriborder:item/passport_hk"
+                      },
+                      {
+                          "predicate":  {
+                                            "custom_model_data":  3
+                                        },
+                          "model":  "veriborder:item/passport_mo"
+                      },
+                      {
+                          "predicate":  {
+                                            "custom_model_data":  4
+                                        },
+                          "model":  "veriborder:item/passport_us"
+                      },
+                      {
+                          "predicate":  {
+                                            "custom_model_data":  5
+                                        },
+                          "model":  "veriborder:item/passport_jp"
+                      },
+                      {
+                          "predicate":  {
+                                            "custom_model_data":  100
+                                        },
+                          "model":  "veriborder:item/custom_passport"
+                      }
+                  ]
+}

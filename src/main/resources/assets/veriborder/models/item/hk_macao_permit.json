@@ -1,9 +1,138 @@
 {
-    "parent":  "minecraft:item/generated",
-    "textures":  {
-                     "layer0":  "veriborder:item/hk_macao_permit"
-                 },
+    "parent":  "veriborder:item/doc_layers_permit",
     "overrides":  [
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.0625
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_star"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.125
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_crown"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.1875
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_shield"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.25
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_globe"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.3125
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_leaf"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.375
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_anchor"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.4375
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_key"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.5
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_stamp"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.5625
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_book"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.625
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_diamond"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.6875
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_flame"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.75
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_gear"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.8125
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_eagle"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:emblem":  0.875
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_emblem_mrz"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:texslot":  0
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_slot_0"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:texslot":  1
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_slot_1"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:texslot":  2
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_slot_2"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:texslot":  3
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_slot_3"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:texslot":  4
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_slot_4"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:texslot":  5
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_slot_5"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:texslot":  6
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_slot_6"
+                      },
+                      {
+                          "predicate":  {
+                                            "veriborder:texslot":  7
+                                        },
+                          "model":  "veriborder:item/hk_macao_permit_slot_7"
+                      },
                       {
                           "predicate":  {
                                             "custom_model_data":  100

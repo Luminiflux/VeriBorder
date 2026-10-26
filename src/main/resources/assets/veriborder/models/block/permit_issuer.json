@@ -6,7 +6,7 @@
     "silver_v2": "veriborder:block/r9_silver_v2",
     "silver_dark": "veriborder:block/r9_silver_dark_v2",
     "dark": "veriborder:block/r9_dark",
-    "screen": "veriborder:block/r9_screen_ui",
+    "screen": "veriborder:block/permit_issuer_screen",
     "led": "veriborder:block/r9_led_green",
     "accent": "veriborder:block/permit_issuer_accent",
     "label": "veriborder:block/permit_issuer_label",
