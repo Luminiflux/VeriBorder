@@ -40,17 +40,17 @@ public final class ClientEvents {
 
     @SubscribeEvent
     public static void clientSetup(FMLClientSetupEvent event) {
-        // The reworked device models use semi-transparent glass inserts and the
-        // E-Gate uses transparent glass panels. Without a translucent render
-        // layer the default solid layer ignores their alpha and paints them as
-        // opaque slabs.
+        // 26.2.2: every device goes on the cutout layer.
+        //
+        // The machines used to sit on translucent() because their glass inserts
+        // carry a frosted alpha gradient. Shader packs sort translucent geometry
+        // separately and skip part of the lighting pass, which made whole machines
+        // look see-through. Cutout only discards alpha below 0.1 and paints the
+        // rest opaque, so the glass reads as frosted glass while the machine keeps
+        // a stable, fully lit surface in every shader pack.
         event.enqueueWork(() -> {
             for (DeviceType type : DeviceType.values()) {
-                // Gates have no semi-transparent static faces (the blades are
-                // drawn by EGateRenderer), so cutout avoids translucent-sorting
-                // flicker across the many overlapping gate elements.
-                ItemBlockRenderTypes.setRenderLayer(ModBlocks.block(type),
-                        type.isGate() ? RenderType.cutout() : RenderType.translucent());
+                ItemBlockRenderTypes.setRenderLayer(ModBlocks.block(type), RenderType.cutout());
             }
         });
     }

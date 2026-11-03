@@ -448,10 +448,18 @@ public class DeviceConfigScreen extends VeriScreen {
                     .options(options)
                     .selected(issuerCountry)
                     .onChange(id -> issuerCountry = id));
+            // 26.2.2: the location field belongs on every machine, including an
+            // issuing machine - it prints the place of issue onto the document.
+            // It was dropped here in 26.3 round 12, which is why an issuer could
+            // no longer be given its own place and only showed the mod-wide
+            // default airport. Officer / airport-destination stay off this page:
+            // those are reader and gate settings, not issuing ones.
+            port = addField(x, top + firstFieldY + 12 + 44, 392, device.placeLabelKey(),
+                    valueFor("port", payload.getString("port")));
             return;
         }
         int fieldStep = 36;
-        port = addField(x, top + firstFieldY, 392, "field.veriborder.port",
+        port = addField(x, top + firstFieldY, 392, device.placeLabelKey(),
                 valueFor("port", payload.getString("port")));
         country = addField(x, top + firstFieldY + fieldStep, 392, "field.veriborder.country",
                 valueFor("country", payload.getString("country")));
@@ -579,7 +587,7 @@ public class DeviceConfigScreen extends VeriScreen {
         // so the whole gate page fits without scrolling.
         gateIdentityY = layout.row(LABEL_HEIGHT + 14);
         int columnWidth = (width - 12) / 2;
-        port = addField(x, gateIdentityY + LABEL_HEIGHT, columnWidth, "field.veriborder.port",
+        port = addField(x, gateIdentityY + LABEL_HEIGHT, columnWidth, device.placeLabelKey(),
                 valueFor("port", payload.getString("port")));
         country = addField(x + columnWidth + 6, gateIdentityY + LABEL_HEIGHT, columnWidth,
                 "field.veriborder.country", valueFor("country", payload.getString("country")));
@@ -1893,12 +1901,8 @@ public class DeviceConfigScreen extends VeriScreen {
             Ui.clipped(graphics, Component.translatable("screen.veriborder.config.issuer_binding",
                     issuerCountry.isBlank() ? "—" : issuerCountry,
                     nationality.isBlank() ? "—" : nationality),
-                    left + 24, top + 150, 392, Ui.CYAN);
-            Ui.clipped(graphics, Component.translatable("screen.veriborder.config.issuer_hint"),
-                    left + 24, top + 164, 392, Ui.DIM);
+                    left + 24, top + 190, 392, Ui.CYAN);
         } else {
-            Ui.clipped(graphics, Component.translatable("screen.veriborder.config.hint"),
-                    left + 24, hintY, 392, Ui.MUTED);
             Ui.clipped(graphics, Component.translatable("screen.veriborder.config.airport_hint"),
                     left + 24, top + 202, 392, Ui.DIM);
         }

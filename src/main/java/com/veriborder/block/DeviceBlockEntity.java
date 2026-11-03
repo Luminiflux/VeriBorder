@@ -248,7 +248,7 @@ public class DeviceBlockEntity extends BlockEntity {
         return clampValidityMonths(tag.getInt(yearsKey) * 12);
     }
 
-    private String port = "北京首都国际机场 T3";
+    private String port = "";
     private String country = "中国";
     private String officer = "边检警官";
     private String airportCountry = "";
@@ -457,7 +457,9 @@ public class DeviceBlockEntity extends BlockEntity {
     }
 
     public String port() {
-        return port;
+        // 26.2.2: an unset location falls back to the default for this device type
+        // instead of one hardcoded airport for every machine in the mod.
+        return port == null || port.isBlank() ? deviceType().defaultPlace() : port;
     }
 
     public String country() {
@@ -473,7 +475,7 @@ public class DeviceBlockEntity extends BlockEntity {
     }
 
     public void setPort(String value) {
-        port = safe(value, "口岸");
+        port = safe(value, deviceType().defaultPlace());
         changed();
     }
 

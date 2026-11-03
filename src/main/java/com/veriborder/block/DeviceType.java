@@ -72,6 +72,52 @@ public enum DeviceType {
         return "block.veriborder." + id;
     }
 
+    /**
+     * 26.2.2: what the machine's location field is <em>called</em> on this device.
+     *
+     * <p>The field used to be labelled "port / checkpoint" everywhere, which reads
+     * wrong on an issuing machine (it prints the place of issue, not a checkpoint).
+     * Each device category now names the field the way a real terminal would.</p>
+     */
+    public String placeLabelKey() {
+        return switch (this) {
+            case ID_ISSUER, PASSPORT_ISSUER, PERMIT_ISSUER -> "field.veriborder.issue_place";
+            case VISA_ISSUER, SELF_VISA, ENDORSEMENT_MACHINE, SELF_ENDORSEMENT ->
+                    "field.veriborder.issuing_place";
+            case AIRPORT_CHECKIN -> "field.veriborder.airport";
+            case STATION_VERIFIER -> "field.veriborder.station";
+            case HOTEL_READER, DESK_SCANNER, MANUAL_TERMINAL -> "field.veriborder.location";
+            case LOSS_TERMINAL, RENEWAL_MACHINE, PRINT_PREVIEW, BLACKLIST_TERMINAL,
+                    STAMP_HISTORY -> "field.veriborder.office";
+            case EGATE, EXIT_GATE, DUAL_GATE, ENTRY_STAMP, EXIT_STAMP ->
+                    "field.veriborder.port";
+        };
+    }
+
+    /**
+     * 26.2.2: the location a freshly placed machine starts with.
+     *
+     * <p>Every machine used to default to "Beijing Capital Airport T3", including
+     * passport issuers and station verifiers. The default now follows the device,
+     * so a terminal opens on a plausible place for its own role.</p>
+     */
+    public String defaultPlace() {
+        return switch (this) {
+            case ID_ISSUER, PASSPORT_ISSUER, PERMIT_ISSUER -> "中国·北京";
+            case VISA_ISSUER, SELF_VISA, ENDORSEMENT_MACHINE, SELF_ENDORSEMENT -> "中国·北京";
+            case AIRPORT_CHECKIN -> "北京首都国际机场 T3";
+            case STATION_VERIFIER -> "轨道交通 大足站";
+            case HOTEL_READER -> "酒店前台";
+            case DESK_SCANNER, MANUAL_TERMINAL -> "边检柜台";
+            case LOSS_TERMINAL, RENEWAL_MACHINE -> "证件服务中心";
+            case PRINT_PREVIEW -> "证件打印室";
+            case BLACKLIST_TERMINAL -> "口岸查验区";
+            case STAMP_HISTORY -> "口岸验讫窗口";
+            case EGATE, EXIT_GATE, DUAL_GATE, ENTRY_STAMP, EXIT_STAMP ->
+                    "北京首都国际机场 T3";
+        };
+    }
+
     public String descriptionKey() {
         return "device.veriborder." + id + ".desc";
     }

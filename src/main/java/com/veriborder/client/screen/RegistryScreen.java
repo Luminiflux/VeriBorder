@@ -908,11 +908,6 @@ public class RegistryScreen extends VeriScreen {
         if (!admin) {
             Ui.clipped(graphics, Component.translatable("screen.veriborder.registry.op_hint"),
                     x, top + ERROR_Y, FIELD_W, Ui.MUTED);
-        } else if (draft.tab() == TAB_TEMPLATES) {
-            // The delete contract, stated where the delete buttons are: documents
-            // never block a delete, an issuing machine's layout lock does.
-            Ui.clipped(graphics, Component.translatable("screen.veriborder.registry.notes_line"),
-                    x, top + ERROR_Y, FIELD_W, Ui.DIM);
         }
     }
 

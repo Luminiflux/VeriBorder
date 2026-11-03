@@ -112,6 +112,9 @@ public class DocumentViewScreen extends VeriScreen {
 
     private final int[] tabPages = new int[7];
 
+    /** 26.2.2: logical tab ids currently offered, in strip order. */
+    private final java.util.List<Integer> visibleTabs = new java.util.ArrayList<>();
+
     private TabStrip tabs;
     private PagedList<VisaRecord> visaList;
     private PagedList<EndorsementRecord> endorseList;
@@ -165,19 +168,60 @@ public class DocumentViewScreen extends VeriScreen {
         return tab;
     }
 
+    /**
+     * 26.2.2: which pages this credential kind can actually show.
+     *
+     * <p>Visas, endorsements and entry stamps belong to travel documents; an ID card
+     * holds none of them, so it only offers identity, MRZ, history and integrity.
+     * Permits keep endorsements and stamps but have no visa page.</p>
+     */
+    private int[] tabsForKind() {
+        DocumentKind kind = doc == null ? DocumentKind.ID_CARD : doc.kind();
+        return switch (kind) {
+            case ID_CARD -> new int[]{TAB_IDENTITY, TAB_MRZ, TAB_HISTORY, TAB_INTEGRITY};
+            case PASSPORT -> new int[]{TAB_IDENTITY, TAB_MRZ, TAB_VISAS, TAB_ENDORSEMENTS,
+                    TAB_STAMPS, TAB_HISTORY, TAB_INTEGRITY};
+            case PERMIT -> new int[]{TAB_IDENTITY, TAB_MRZ, TAB_ENDORSEMENTS, TAB_STAMPS,
+                    TAB_HISTORY, TAB_INTEGRITY};
+        };
+    }
     // ------------------------------------------------------------------- build
     @Override
     protected void build() {
         accent = doc == null ? Ui.CYAN : TemplateDisplay.documentTint(doc) | 0xFF000000;
+        // 26.2.2: only show the tabs this credential kind can actually have. An ID
+        // card has no visas, endorsements or entry stamps, so those pages used to
+        // be empty shells on a document that can never fill them.
+        visibleTabs.clear();
+        for (int id : tabsForKind()) {
+            visibleTabs.add(id);
+        }
         tabs = TabStrip.at(STRIP_X, STRIP_Y, STRIP_W).size(20, 3);
-        tabs.add("identity", Component.translatable("tab.veriborder.identity"));
-        tabs.add("mrz", Component.translatable("tab.veriborder.mrz"));
-        tabs.add("visas", countLabel("tab.veriborder.visas", visaCount()));
-        tabs.add("endorsements", countLabel("tab.veriborder.endorsements", endorsementCount()));
-        tabs.add("stamps", countLabel("tab.veriborder.stamps", stampCount()));
-        tabs.add("history", Component.translatable("tab.veriborder.history"));
-        tabs.add("integrity", Component.translatable("tab.veriborder.integrity"));
-        tabs.setSelected(tab);
+        for (int id : visibleTabs) {
+            switch (id) {
+                case TAB_IDENTITY -> tabs.add("identity",
+                        Component.translatable("tab.veriborder.identity"));
+                case TAB_MRZ -> tabs.add("mrz",
+                        Component.translatable("tab.veriborder.mrz"));
+                case TAB_VISAS -> tabs.add("visas",
+                        countLabel("tab.veriborder.visas", visaCount()));
+                case TAB_ENDORSEMENTS -> tabs.add("endorsements",
+                        countLabel("tab.veriborder.endorsements", endorsementCount()));
+                case TAB_STAMPS -> tabs.add("stamps",
+                        countLabel("tab.veriborder.stamps", stampCount()));
+                case TAB_HISTORY -> tabs.add("history",
+                        Component.translatable("tab.veriborder.history"));
+                case TAB_INTEGRITY -> tabs.add("integrity",
+                        Component.translatable("tab.veriborder.integrity"));
+                default -> {
+                }
+            }
+        }
+        int selectedIndex = Math.max(0, visibleTabs.indexOf(tab));
+        if (selectedIndex > 0 || visibleTabs.isEmpty() || visibleTabs.get(0) != tab) {
+            tab = visibleTabs.isEmpty() ? TAB_IDENTITY : visibleTabs.get(selectedIndex);
+        }
+        tabs.setSelected(selectedIndex);
 
         if (doc != null) {
             CardPanel.Content content = rightContent();
@@ -949,10 +993,10 @@ public class DocumentViewScreen extends VeriScreen {
         double uiX = toUiX(mouseX);
         double uiY = toUiY(mouseY);
         int hit = tabs.hit(uiX, uiY);
-        if (hit >= 0) {
+        if (hit >= 0 && hit < visibleTabs.size()) {
             rememberPage();
             tabs.setSelected(hit);
-            tab = hit;
+            tab = visibleTabs.get(hit);
             rebuildWidgets();
             return true;
         }
